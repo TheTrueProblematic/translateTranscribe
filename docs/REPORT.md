@@ -430,3 +430,53 @@ gate.min_confidence"* rather than leaving you to infer it.
 cases at their real confidences, plus a guard asserting `min_confidence` stays
 below the quietest thing you actually said, plus the Portuguese chunks that must
 still be rejected. 188 tests pass.
+
+
+---
+
+## 11. Second round of fixes
+
+**The English strip was there, but you were served an old page.** Static assets
+went out with an ETag and no `Cache-Control`, and the display runs in a
+persistent Chrome profile (`--app` with a fixed `--user-data-dir`), so the
+window kept running the previously cached `display.js` — the build with no
+strip in it. Assets are now sent `no-store`, so a stale display is not possible.
+This was worth finding for its own sake: any future change to the display would
+have hit the same wall.
+
+**Moved to the bottom, at a fixed 13px** as asked, with the live uncommitted
+tail in italic. Fixed pixels rather than viewport units on purpose — it is read
+from the laptop at arm's length, so it must not scale up with the Portuguese
+when you drive a projector.
+
+**Transcripts.** Every run writes `logs/transcripts/transcript-<stamp>.txt`
+(readable, EN above PT) and `.jsonl` (timings, confidence, English-ness score,
+latency, chunk trigger). Dropped phrases are recorded too with their reason and
+scores. Both flush per line, so a hard quit loses nothing. This was a stated
+non-goal in the original spec, added on request.
+
+**A leak the transcript immediately exposed.** Feeding English and then
+Portuguese through one continuous session — rather than each fixture alone, as
+the tests did — the recogniser carries English context across the boundary and
+renders Portuguese as plausible English:
+
+```
+#5 (conf 0.823)  "Naughtoquines connector, henda esta energizado, and you verify..."
+#7 (conf 0.814)  "in physiology, but support."
+```
+
+The language check scores those as English, so only confidence can stop them,
+and 0.80 was below both. Re-measured across every sample I have:
+
+| min_confidence | your speech dropped | Portuguese shown |
+|---|---|---|
+| 0.80 | 0 | **2** |
+| **0.85** | **0** | **0** |
+| 0.90 | 0 | 0 |
+
+0.85 sits between the worst leak (0.823) and your quietest real utterance
+(0.921), so it now stands at 0.85 with margin on both sides. Both leaked
+phrases are regression tests, alongside a guard that fails if the threshold is
+ever set outside that window in either direction.
+
+191 tests pass.

@@ -55,10 +55,11 @@ It starts listening immediately. There is no global hotkey to set up.
 | `0` | Reset type size |
 | `F` | Toggle fullscreen |
 
-The thin English line at the top is the **speaker's monitor** — it shows what
-the recogniser is hearing, plus a note whenever a phrase was dropped and why
-(`dropped (low_confidence, conf 0.74, en 0.61)`). It is small and dim so the
-audience keeps reading the Portuguese; press `E` to hide it entirely.
+The small English line along the **bottom** is the speaker's monitor — what the
+recogniser is hearing, live, with the not-yet-committed tail in italic and a
+note whenever a phrase was dropped and why (`dropped (low_confidence, conf
+0.74, en 0.61)`). It is 13px and stays 13px on a projector, because it is read
+from the laptop, not from the room. Press `E` to hide it.
 
 The status dot: **green** listening, **amber** held, **blue** translating,
 **red** disconnected. The bar beside it is the mic level. There is deliberately
@@ -78,6 +79,27 @@ touching mid-session are under `[gate]`:
 Chunking thresholds, the model id, fonts, the hotkey binding, and the
 vocabulary and normalizer rules all live there too. The acronym, compound-word
 and truncation lists are meant to be extended.
+
+## Transcripts
+
+Every run writes both languages to `logs/transcripts/`:
+
+- `transcript-<timestamp>.txt` — readable, English above its Portuguese
+- `transcript-<timestamp>.jsonl` — one record per line with timings,
+  confidences, English-ness scores and latency, for scoring a session later
+
+Dropped phrases are included too, marked with the reason and scores — that is
+the material you need to tune the gate. Both files are flushed line by line, so
+quitting hard loses nothing.
+
+```
+[06:19:03] #4
+  EN  I am ready to start the calibration now.
+  PT  Estou pronto para iniciar a calibração agora.
+
+[06:19:13] #5  (dropped: low_confidence, conf 0.82, en 0.00)
+  EN  Naughtoquines connector, henda esta energizado, and you verify the firmware.
+```
 
 ## What gets logged
 

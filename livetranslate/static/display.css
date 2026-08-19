@@ -36,33 +36,37 @@ html, body {
   text-rendering: optimizeLegibility;
 }
 
-/* Monitor strip (English, for the speaker only) */
+/* Monitor strip (English, for the speaker only).
+   Sits at the BOTTOM and uses a fixed point size, not viewport units: it is
+   read from the laptop at arm's length, never from the back of the room, so it
+   must not scale up with the Portuguese. */
 .monitor {
   position: fixed;
-  top: 0; left: 0; right: 0;
-  padding: 0.9vh 1.6vw 0.9vh;
-  font-size: 1.9vh;
-  line-height: 1.35;
+  bottom: 0; left: 0; right: 0;
+  padding: 6px 14px 8px;
+  font-size: 13px;
+  line-height: 1.4;
   color: var(--fg);
-  opacity: 0.42;
+  opacity: 0.6;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   direction: rtl;               /* keep the newest words visible when it overflows */
   text-align: left;
+  background: linear-gradient(to top, rgba(5,5,6,0.96), rgba(5,5,6,0));
   z-index: 9;
   pointer-events: none;
 }
 .monitor > * { direction: ltr; unicode-bidi: embed; }
-.en-partial { opacity: 0.55; font-style: italic; }
-.en-note { color: #FF9F0A; opacity: 0.95; margin-left: 0.8vw; }
+.en-partial { opacity: 0.6; font-style: italic; }
+.en-note { color: #FF9F0A; opacity: 1; margin-left: 10px; }
 body.no-monitor .monitor { display: none; }
 
 .stage {
   width: 100%; height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 4.6vh var(--pad-x) 3vh;   /* room for the monitor strip */
+  padding: 2.5vh var(--pad-x) 4.2vh;  /* bottom room for the monitor strip */
 }
 
 .line {
@@ -157,7 +161,7 @@ body.paused { box-shadow: inset 0 0 0 0.8vh #FF9F0A; }
 /* Font-size feedback, shown only while adjusting. */
 .toast {
   position: fixed;
-  bottom: 2vh; right: 1.4vw;
+  bottom: 3.4vh; right: 1.4vw;
   font-size: 1.6vh;
   color: var(--fg);
   opacity: 0;

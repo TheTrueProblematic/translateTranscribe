@@ -69,19 +69,21 @@ hangover_ms = 200           # Speech must be absent this long before silence is 
 # certain about speech it was never trained on, which makes this the most
 # useful automatic filter against other people's Portuguese.
 #
-# Measured from a real session on this machine (logs/livetranslate.log):
-#     your own voice, built-in mic   0.921 - 0.988
-#     quiet / distant room speech     ~0.817
-#     synthesized Portuguese          0.765 - 0.927
-# Those overlap, so this cannot be perfect, and the two failures are not equal:
-# dropping YOUR words means a blank screen, which is what a too-strict setting
-# already cost once. 0.80 sits well below anything you actually said.
+# Measured on this machine, from real sessions and from pt_BR fixtures:
+#     you, into the built-in mic     0.921 - 0.998
+#     Portuguese in the room         0.765 - 0.927
+# They overlap, so confidence alone cannot separate them -- the English-ness
+# check handles the clearly-Portuguese cases (which score ~0.00) and this
+# handles Portuguese that comes back looking like English ("in physiology, but
+# support."). Together, on that measured corpus: nothing of yours dropped,
+# nothing of theirs shown.
 #
-# Tuning it is meant to be quick: every dropped chunk is shown on the English
-# strip at the top of the display with its reason and score, e.g.
+# 0.85 sits between the worst leak (0.823) and your quietest utterance (0.921).
+# Tuning is meant to be quick: every dropped chunk appears on the English strip
+# at the bottom of the display with its reason and scores, e.g.
 #     dropped (low_confidence, conf 0.74, en 0.61)
-# so raise or lower this from what you actually see, not from guesswork.
-min_confidence = 0.80
+# and every run's transcript records them too. Tune from that, not from guesses.
+min_confidence = 0.85
 min_english_score = 0.45       # English-ness 0..1 below this => drop. Measured: real English 0.57-0.94, garbled pt_BR 0.00-0.18.
 min_words = 2               # Drop 1-word fragments; they are usually noise, not speech.
 # --------------------------------------------------------------------------
@@ -108,6 +110,16 @@ max_lines = 2               # Current line + previous line, per spec.
 prev_opacity = 0.4          # Dimming of the previous line.
 background = "#050506"
 foreground = "#F5F5F7"
+
+[transcript]
+# Every run writes both languages to logs/transcripts/, so a session can be
+# reviewed or scored afterwards. Two files per run: a readable .txt with the
+# English above its Portuguese, and a .jsonl with timings, confidences and
+# scores for evaluation. Both are flushed per line, so a hard quit loses nothing.
+enabled = true
+dir = "logs/transcripts"
+include_rejected = true     # also record what the gate dropped, and why --
+                            # that is the material you need to tune thresholds.
 
 [logging]
 dir = "logs"

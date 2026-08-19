@@ -38,7 +38,19 @@ class DisplayServer:
         self._recent_lines: list[dict[str, Any]] = []
         self._last_english: dict[str, Any] | None = None
 
-        self.app = web.Application()
+        # Chrome runs the display in a persistent profile, so without this a
+        # stale display.js/display.css survives across restarts and the page
+        # silently keeps running an old build. That is exactly how an added
+        # feature can appear to be missing. Assets are tiny and local; never
+        # cache them.
+        @web.middleware
+        async def no_store(request, handler):
+            response = await handler(request)
+            response.headers["Cache-Control"] = "no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            return response
+
+        self.app = web.Application(middlewares=[no_store])
         self.app.add_routes([
             web.get("/", self._index),
             web.get("/ws", self._ws),

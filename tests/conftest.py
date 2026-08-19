@@ -10,4 +10,11 @@ from livetranslate.config import Config
 
 @pytest.fixture(scope="session")
 def cfg():
-    return Config.load()
+    """The real config, with per-run transcript files turned off.
+
+    Tests build many pipelines; without this each one would drop a pair of
+    files into logs/transcripts/ and bury the real sessions.
+    """
+    config = Config.load()
+    config._data.setdefault("transcript", {})["enabled"] = False
+    return config

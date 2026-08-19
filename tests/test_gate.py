@@ -156,6 +156,18 @@ def test_real_session_speech_is_accepted(gate, text, conf):
     assert d.accepted, f"real speech rejected as {d.reason} (en {d.english:.2f})"
 
 
+HIGHEST_PORTUGUESE_CONFIDENCE = 0.823   # highest that language ID cannot catch
+
+
+def test_confidence_threshold_sits_above_english_looking_portuguese(cfg):
+    """The other side of the window: Portuguese that decodes into plausible
+    English is only stopped by confidence."""
+    assert cfg.get("gate.min_confidence") > HIGHEST_PORTUGUESE_CONFIDENCE, (
+        f"min_confidence {cfg.get('gate.min_confidence')} would let "
+        f"English-looking Portuguese through"
+    )
+
+
 def test_confidence_threshold_sits_below_real_speech(cfg):
     """Guards against re-tuning the gate above what the microphone delivers."""
     lowest_real = min(conf for _, conf in REAL_SESSION_SPEECH)
@@ -174,6 +186,11 @@ def test_mangled_portuguese_is_still_rejected(gate):
         ("Sabaro Sistema de Navigaseo, Cuando Voqui Ve caladraceo do", 0.862),
         ("do jimbal, a gente pog phaser o test depois du intervalo, tudo", 0.893),
         ("I need this connector, henda esta energizado,", 0.812),
+        # These two come back looking like plain English, so the language check
+        # cannot catch them -- confidence is the only thing that does.
+        ("in physiology, but support.", 0.814),
+        ("Naughtoquines connector, henda esta energizado, and you verify the "
+         "firmware. The problem is", 0.823),
     ]:
         d = gate.evaluate(text, confidence=conf)
         assert not d.accepted, f"Portuguese reached the display: {text!r}"

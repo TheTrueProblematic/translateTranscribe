@@ -24,6 +24,7 @@ from .chunker import Chunk, Chunker, Word
 from .gate import Gate
 from .normalizer import Normalizer
 from .output_buffer import OrderedOutputBuffer
+from .transcript import TranscriptWriter
 from .translator import Translator
 
 log = logging.getLogger("livetranslate.pipeline")
@@ -39,6 +40,7 @@ class Pipeline:
         self.gate = Gate(cfg, normalizer=self.normalizer)
         self.translator = translator or Translator(cfg)
         self.buffer = OrderedOutputBuffer()
+        self.transcript = TranscriptWriter(cfg)
 
         self._queue: asyncio.Queue[Chunk] = asyncio.Queue()
         self._worker: asyncio.Task | None = None
@@ -68,6 +70,7 @@ class Pipeline:
     # ---------------- lifecycle ----------------
 
     async def start(self) -> None:
+        self.transcript.open()
         await self.translator.start()
         if self._worker is None:
             self._worker = asyncio.create_task(self._run_worker())
@@ -82,6 +85,7 @@ class Pipeline:
                 pass
             self._worker = None
         await self.translator.close()
+        self.transcript.close()
 
     # ---------------- inputs from ASR ----------------
 
@@ -181,6 +185,13 @@ class Pipeline:
                 note=f"dropped ({decision.reason}, conf {decision.confidence:.2f},"
                      f" en {decision.english:.2f})"
             )
+            self.transcript.write(
+                seq=chunk.seq, english=normalized, raw_english=chunk.text,
+                accepted=False, reason=decision.reason,
+                confidence=decision.confidence, english_score=decision.english,
+                audio_start=chunk.start, audio_end=chunk.end,
+                chunk_reason=chunk.reason,
+            )
             for r in self.buffer.skip(chunk.seq):
                 await self.server.send_line(r.seq, r.text, r.final)
             return
@@ -222,6 +233,14 @@ class Pipeline:
                     self.stats["translated"] += 1
                     timing_log.info("total_ms=%.1f seq=%d", total, chunk.seq)
                     log.info("PT  [%d] (%.0fms) %r", chunk.seq, total, text)
+                    self.transcript.write(
+                        seq=chunk.seq, english=normalized, raw_english=chunk.text,
+                        portuguese=text, accepted=True,
+                        confidence=decision.confidence,
+                        english_score=decision.english, latency_ms=total,
+                        audio_start=chunk.start, audio_end=chunk.end,
+                        chunk_reason=chunk.reason,
+                    )
         finally:
             self._translating = False
             await self.publish_status()
