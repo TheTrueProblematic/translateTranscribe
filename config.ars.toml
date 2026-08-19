@@ -1,0 +1,129 @@
+# ============================================================================
+# LiveTranslate — ARS training mode
+#
+# Everything here layers on top of config.toml: thresholds, models, timings and
+# display settings all come from there, so tuning the base tunes this too. Only
+# the session vocabulary lives in this file.
+#
+# Launch with ARSLiveTranslate.command (or: python -m livetranslate --config
+# config.ars.toml). The normal LiveTranslate.command is unaffected.
+#
+# Two layers do the work, deliberately:
+#   1. The normalizer rules below FIX the mishearings deterministically, before
+#      translation. This is exact, instant and testable -- "hair craft" always
+#      becomes "aircraft", never sometimes.
+#   2. The prompt glossary gives the model the context to infer the ones no
+#      rule anticipated.
+# ============================================================================
+
+extends = "config.toml"
+
+# ---------------------------------------------------------------------------
+# Spelled-out acronyms specific to this session.
+# ---------------------------------------------------------------------------
+[normalizer.acronyms]
+"a r s" = "ARS"
+"f l i r" = "FLIR"
+"m 2" = "M2"
+"a r" = "AR"          # longer patterns win, so "a r s" is still matched first
+"a t o m" = "ATOM"
+
+# ---------------------------------------------------------------------------
+# Words the recogniser splits in two. "hair craft" is the observed real case.
+# ---------------------------------------------------------------------------
+[normalizer.compounds]
+"hair craft" = "aircraft"
+"air craft" = "aircraft"
+"hair crafts" = "aircraft"
+"shot over systems" = "SHOTOVER Systems"
+"shot over" = "SHOTOVER"
+"shoot over" = "SHOTOVER"
+"pilot display" = "PilotDisplay"
+"earth scape" = "Earthscape"
+"earth escape" = "Earthscape"
+"earth cape" = "Earthscape"
+"m two" = "M2"
+"em two" = "M2"
+"at om" = "ATOM"
+"i am you" = "IMU"
+"flash drives" = "flash drives"
+"augmented reality" = "augmented reality"
+
+# ---------------------------------------------------------------------------
+# Whole words the recogniser reliably gets wrong. Exact, case-insensitive
+# matches only. These are safe HERE because this vocabulary is loaded only for
+# ARS training -- "emu" means IMU in this room, and nothing else.
+# ---------------------------------------------------------------------------
+[normalizer.corrections]
+# IMU. Observed: an English-only recogniser renders "the IMU" as "the EMU".
+"emu" = "IMU"
+"emus" = "IMUs"
+"imu" = "IMU"
+
+# Gimbal. Observed mishearings across test runs: jimbal, jumble, Jimbo.
+"jimbal" = "gimbal"
+"jimbals" = "gimbals"
+"jumble" = "gimbal"
+"jumbal" = "gimbal"
+"gimble" = "gimbal"
+"gimbels" = "gimbals"
+"jimbo" = "gimbal"
+
+# Aircraft
+"haircraft" = "aircraft"
+"aircrafts" = "aircraft"
+
+# SHOTOVER Systems
+"shotover" = "SHOTOVER"
+"shotovers" = "SHOTOVER"
+
+# ARS
+"ars" = "ARS"
+"arse" = "ARS"
+
+# ATOM, the SHOTOVER flight computer -- not the physics word, not the name Adam.
+"atom" = "ATOM"
+"adam" = "ATOM"
+
+# FLIR
+"flir" = "FLIR"
+"fleer" = "FLIR"
+"flear" = "FLIR"
+
+# Our products
+"pilotdisplay" = "PilotDisplay"
+"earthscape" = "Earthscape"
+"earthscapes" = "Earthscape"
+
+# The presenter
+"max" = "Max"
+
+# ---------------------------------------------------------------------------
+# Session vocabulary for the translation model. Inserted into the system prompt
+# before the worked examples (those stay last -- they carry the masculine
+# agreement the speaker depends on).
+# ---------------------------------------------------------------------------
+[prompt]
+extra_rules = """
+This is a training session about ARS. The speaker is Max, from SHOTOVER Systems.
+The speech recognition mishears the following terms constantly. If the input
+contains something that merely SOUNDS like one of them, assume it is that term
+and translate accordingly. Keep every one of them in English, spelled exactly
+as written here, never translated and never explained:
+- ARS: the software being presented.
+- SHOTOVER Systems: the speaker's company. A company name -- translate
+  neither word, so never "sistemas SHOTOVER". Also written SHOTOVER alone.
+- ATOM: SHOTOVER's flight computer in the aircraft. Never the physics word
+  "atom", never the name "Adam"; if in doubt it is the flight computer.
+- M2: SHOTOVER's camera gimbal. FLIR is a competing gimbal the customer owns.
+- PilotDisplay: the iPad app that shows information to the pilot.
+- Earthscape: SHOTOVER's downlinking software.
+- IMU: the inertial measurement unit in the aircraft. Heard as "emu".
+- gimbal: the stabilized camera on the aircraft. Heard as "jimbal" or "jumble".
+- aircraft: heard as "hair craft" or "air craft".
+- AR: augmented reality. The map is moving-map software with street overlays.
+Also:
+- The speaker dictates keyboard shortcuts as single letters ("press I", "press
+  V"). Keep a single letter as that letter; never translate it as a word and
+  never expand it.
+"""

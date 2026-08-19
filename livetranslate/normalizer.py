@@ -5,10 +5,14 @@ them here is faster and far more reliable than asking the translation model to
 cope. Every rule is driven from config.toml and covered by a unit test.
 
 Pipeline order matters:
-  disfluencies -> repeats -> acronyms -> compounds -> truncations -> clock times
+  disfluencies -> repeats -> acronyms -> compounds -> corrections
+  -> truncations -> clock times
 
 Compounds run before truncations because "ver" repair keys off the *joined*
 word ("firmware"), which only exists after "firm ware" has been rejoined.
+Corrections (whole words the recogniser reliably gets wrong, e.g. "emu" for
+"IMU") run after compounds so that a two-token mishearing has already been
+joined into the single token a correction can match.
 """
 from __future__ import annotations
 
@@ -57,6 +61,13 @@ class Normalizer:
         # over any shorter prefix that also matches.
         self.acronyms = self._compile_seq(cfg.section("normalizer.acronyms"))
         self.compounds = self._compile_seq(cfg.section("normalizer.compounds"))
+
+        # Whole-word substitutions for terms the recogniser reliably mangles.
+        # Domain vocabularies live in their own config (see config.ars.toml);
+        # the base config keeps this empty so nothing is rewritten by surprise.
+        self.corrections = {
+            k.lower(): v for k, v in (cfg.section("normalizer.corrections") or {}).items()
+        }
 
         self.truncations: dict[str, tuple[str, set[str]]] = {}
         for short, spec in (cfg.section("normalizer.truncations") or {}).items():
@@ -120,6 +131,26 @@ class Normalizer:
 
     def join_compounds(self, tokens: list[str]) -> list[str]:
         return self._apply_sequences(tokens, self.compounds)
+
+    def apply_corrections(self, tokens: list[str]) -> list[str]:
+        """Replace whole words the recogniser reliably gets wrong.
+
+        Punctuation is preserved: "emu." becomes "IMU." rather than "IMU".
+        """
+        if not self.corrections:
+            return tokens
+        out = []
+        for tok in tokens:
+            key = _strip_edge_punct(tok)
+            replacement = self.corrections.get(key)
+            if replacement is None:
+                out.append(tok)
+                continue
+            # Re-attach whatever punctuation was hanging off the original.
+            lead = tok[: len(tok) - len(tok.lstrip(".,!?;:"))]
+            trail = tok[len(tok.rstrip(".,!?;:")):]
+            out.append(f"{lead}{replacement}{trail}")
+        return out
 
     def repair_truncations(self, tokens: list[str]) -> list[str]:
         out = list(tokens)
@@ -213,6 +244,7 @@ class Normalizer:
             tokens = self.collapse_repeats(tokens)
         tokens = self.join_acronyms(tokens)
         tokens = self.join_compounds(tokens)
+        tokens = self.apply_corrections(tokens)
         tokens = self.repair_truncations(tokens)
         if self.enable_clock:
             tokens = self.convert_clock_times(tokens)

@@ -480,3 +480,145 @@ phrases are regression tests, alongside a guard that fails if the threshold is
 ever set outside that window in either direction.
 
 191 tests pass.
+
+
+---
+
+## 12. ARS training mode
+
+A second launcher, `ARSLiveTranslate.command`. Same application; the only
+difference is `config.ars.toml`, which carries the session vocabulary.
+
+**Built in two layers, deliberately.** The request was to put the word list in
+the prompt. That is half of it, and the weaker half: "hair craft" for
+"aircraft" is a split compound, exactly the class of problem section 7 of the
+original spec says to solve in code because string rules are faster and more
+reliable than asking a model to notice. So:
+
+1. **Normalizer rules** fix the known mishearings before translation —
+   deterministic, instant, unit-tested. "hair craft" becomes "aircraft" every
+   single time, not usually.
+2. **A prompt glossary** gives the model context for the ones no rule
+   anticipated, and tells it to keep product names in English.
+
+The corrections come from mishearings actually observed in testing, not
+guesses: `emu` → IMU and `jimbal`/`jumble`/`Jimbo` → gimbal all appeared in
+real recogniser output during this project, and `hair craft` is your own.
+
+Verified end to end on real audio: the recogniser produced "The emu is
+reporting a fault", and the transcript recorded "The IMU is reporting a fault"
+→ "A IMU está reportando um defeito no lado esquerdo."
+
+Sample of the mode running against the real model:
+
+| recognised | normalised | displayed |
+|---|---|---|
+| the hair craft is ready | the aircraft is ready | A aeronave está pronta para o voo. |
+| the m two gimbal beats the fleer | the M2 gimbal beats the FLIR | O gimbal M2 é melhor que o FLIR. |
+| shot over systems built the atom | SHOTOVER Systems built the ATOM | ...construíram o computador de voo ATOM. |
+| press i ... then press v for the a r overlay | press i ... press v for the AR overlay | Pressione I ... pressione V para a sobreposição... |
+
+**Config layering.** `config.ars.toml` declares `extends = "config.toml"` and
+overrides only the vocabulary; tables merge key by key, so adding five acronyms
+keeps the base fifteen. This matters more than it looks: with two copied config
+files, tuning `min_confidence` in one would silently leave the other on a stale
+value. A test asserts the shared settings stay identical across both modes.
+
+**The normal mode is byte-identical.** Its prompt is unchanged (asserted by
+test), its normalizer has no word-level corrections at all, and none of the ARS
+rewrites apply — "adam is the flight computer" stays untouched outside an ARS
+session.
+
+### A defect this surfaced
+
+Testing the ARS prompt exposed a real bug affecting **both** modes: the model
+was prepending its previous translation to the next line.
+
+```
+#1  A aeronave está pronta para o voo.
+#2  A aeronave está pronta para o voo. O IMU ainda não foi calibrado.
+```
+
+The audience read the same sentence twice, and the line grew until the autofit
+shrank the type. The cause was context being pasted into the user message with
+a prose instruction not to repeat it, which this model ignores. Context is now
+replayed as genuine user/assistant chat turns, so the earlier translations are
+already its own replies and there is nothing to copy. A `_strip_echoed_context`
+safety net trims it if it ever happens again, and logs it.
+
+Fixed for both modes, with regression tests covering the echo and confirming
+context still carries agreement across sentence boundaries.
+
+**Transcripts now record which config produced them** (`# config
+config.ars.toml`, and a `config` field per JSONL record), so ARS sessions can be
+told apart from normal ones when reviewing.
+
+229 tests pass.
+
+
+---
+
+## 13. Minimum reading time and the catch-up queue
+
+Talking quickly replaced lines before the audience could read them. Lines are
+now held on screen for a reading time, and anything said in the meantime waits
+its turn.
+
+**How long a line holds.** `lead_in + characters / reading_cps`, clamped:
+
+| line | hold |
+|---|---|
+| "Estou pronto." | 1.3 s (the floor) |
+| "O IMU está com defeito no lado esquerdo." | 3.2 s |
+| "Não toque nesse conector, ele ainda está energizado." | 4.1 s |
+| a full 14-word chunk | 4.5 s (the cap) |
+
+Subtitle practice puts adult reading around 15-17 characters per second;
+`reading_cps` is set to 13.5, deliberately slower, because this audience is
+reading a translation while also listening to a language they may not follow.
+The 4.5 s cap is there so nothing ever feels like it is dragging.
+
+**Catching up.** While a line is holding, the next chunk is still translated —
+that work is exactly how the display catches up — and then waits for the slot.
+As the queue deepens the hold is compressed toward a floor, so the display
+recovers without needing you to stop.
+
+The floor is proportional to the line's own reading time, not a flat minimum.
+That distinction matters: a flat floor would squeeze a long sentence into the
+same 1.3 s a three-word one gets, which is exactly the problem being fixed.
+
+| backlog | short line | long line |
+|---|---|---|
+| 0 | 1.30 s | 4.50 s |
+| 4 | 1.30 s | 3.15 s |
+| 6+ | 1.30 s | 2.48 s |
+
+Nothing is ever dropped; the queue only drains faster.
+
+**The backlog bar** is a 3px strip along the very bottom edge, growing
+rightward with queue depth: blue, amber past half, red near full. Full width is
+`display.backlog_bar_full` (8) lines behind.
+
+**Streaming is preserved when there is nothing waiting.** With a clear queue a
+line still streams in character by character as it generates, as originally
+specified. Only when a line is already waiting does it appear whole — by the
+time it is allowed on screen it is complete anyway, so streaming it would show
+nothing extra.
+
+### A measurement this changed
+
+"End-of-phrase to first character on screen" now includes deliberate queueing,
+so it is no longer a measure of how responsive the pipeline is. The two are now
+tracked separately:
+
+| | median | p90 | fastest |
+|---|---|---|---|
+| **ready** (end-of-phrase → translation ready) | 1276 ms | 2041 ms | 703 ms |
+| **on screen** (what the audience experiences) | 1723 ms | 2879 ms | 1074 ms |
+
+Responsiveness is asserted against `ready`; `first_char` is recorded so the
+cost of holding lines stays visible rather than being hidden inside one number.
+
+All 239 tests pass, including ten covering hold length, the compression floor,
+queueing under fast speech, backlog reporting, and the case that must not
+regress: with nothing queued, a line is not delayed at all.

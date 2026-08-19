@@ -48,6 +48,7 @@ class CapturingServer:
         self.statuses: list[dict] = []
         self.levels: list[float] = []
         self.english: list[tuple[str, str, str]] = []
+        self.backlog: list[int] = []
 
     async def send_line(self, seq, text, final):
         self.lines.append((seq, text, final))
@@ -57,6 +58,9 @@ class CapturingServer:
 
     async def send_english(self, text, partial="", note=""):
         self.english.append((text, partial, note))
+
+    async def send_backlog(self, pending):
+        self.backlog.append(pending)
 
     async def send_level(self, rms):
         self.levels.append(rms)

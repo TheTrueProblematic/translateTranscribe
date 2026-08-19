@@ -36,6 +36,27 @@ html, body {
   text-rendering: optimizeLegibility;
 }
 
+/* Backlog bar: pinned to the very bottom edge, under the monitor strip.
+   Long bar = the display is behind and the speaker should ease off. */
+.backlog-track {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 3px;
+  background: transparent;
+  z-index: 11;
+  pointer-events: none;
+}
+.backlog {
+  height: 100%;
+  width: 0%;
+  background: #0A84FF;
+  opacity: 0.85;
+  border-radius: 0 2px 2px 0;
+  transition: width 220ms ease, background-color 220ms linear;
+}
+.backlog.deep { background: #FF9F0A; }   /* falling behind */
+.backlog.full { background: #FF453A; }   /* pause and let it catch up */
+
 /* Monitor strip (English, for the speaker only).
    Sits at the BOTTOM and uses a fixed point size, not viewport units: it is
    read from the laptop at arm's length, never from the back of the room, so it
@@ -43,7 +64,7 @@ html, body {
 .monitor {
   position: fixed;
   bottom: 0; left: 0; right: 0;
-  padding: 6px 14px 8px;
+  padding: 6px 14px 11px;   /* clear of the backlog bar */
   font-size: 13px;
   line-height: 1.4;
   color: var(--fg);

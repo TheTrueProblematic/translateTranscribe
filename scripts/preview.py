@@ -30,6 +30,7 @@ async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hold", type=float, default=600.0)
     ap.add_argument("--paused", action="store_true", help="render the paused state")
+    ap.add_argument("--backlog", type=int, default=0, help="render a queue depth")
     args = ap.parse_args()
 
     cfg = Config.load()
@@ -46,6 +47,7 @@ async def main() -> None:
 
     await server.send_status(paused=args.paused, translating=False, listening=True)
     await server.send_level(0.42)
+    await server.send_backlog(args.backlog)
     await server.send_english(
         "do not touch that connector it is still live the fuselage has a crack",
         "near the gimbal mount",

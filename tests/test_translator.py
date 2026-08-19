@@ -155,3 +155,36 @@ async def test_context_lines_are_not_echoed(tr):
     second = await tr.translate("it's still live")
     assert second != first
     assert "energizado" in second.lower() or "ligad" in second.lower(), second
+
+
+# ---------------- regression: the model echoing its own context ----------------
+
+@pytest.mark.asyncio
+async def test_previous_line_is_not_prepended_to_the_next(tr):
+    """Context must inform agreement without being repeated on screen.
+
+    Told in prose to "not repeat" the previous lines, this model repeated them
+    anyway: the second translation arrived with the first glued to the front,
+    so the audience read the same sentence twice and the line grew until the
+    autofit shrank the type. Context is now replayed as real chat turns.
+    """
+    tr.reset_context()
+    first = await tr.translate("the aircraft is ready for the flight")
+    second = await tr.translate("the imu is not calibrated yet")
+    third = await tr.translate("open the map on the ipad")
+
+    assert first and second and third
+    assert not second.startswith(first), f"echoed previous line:\n{second}"
+    assert not third.startswith(second), f"echoed previous line:\n{third}"
+    # And each line should be about its own sentence, not a running paragraph.
+    assert len(second.split()) < 18, f"line grew unexpectedly: {second}"
+
+
+@pytest.mark.asyncio
+async def test_context_still_carries_agreement_across_lines(tr):
+    """The point of context: a pronoun in the next line resolves correctly."""
+    tr.reset_context()
+    await tr.translate("i am opening the gimbal panel now")
+    out = await tr.translate("it is still live")
+    assert out
+    assert "energizado" in out.lower() or "ligad" in out.lower(), out

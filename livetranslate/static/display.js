@@ -19,7 +19,9 @@
     enText: document.getElementById("enText"),
     enPartial: document.getElementById("enPartial"),
     enNote: document.getElementById("enNote"),
+    backlog: document.getElementById("backlog"),
   };
+  let backlogFull = 8;
 
   // ---------- font scale (persisted) ----------
   const SCALE_KEY = "livetranslate.fontScale";
@@ -100,7 +102,16 @@
           break;
         case "settings":
           document.body.classList.toggle("no-monitor", !m.show_english_monitor);
+          if (m.backlog_bar_full > 0) backlogFull = m.backlog_bar_full;
           break;
+        case "backlog": {
+          const n = Math.max(0, m.pending | 0);
+          const frac = Math.min(1, n / backlogFull);
+          el.backlog.style.width = (frac * 100) + "%";
+          el.backlog.classList.toggle("deep", frac >= 0.5 && frac < 0.9);
+          el.backlog.classList.toggle("full", frac >= 0.9);
+          break;
+        }
         case "english": {
           // Speaker's monitor only. Trimmed to the last few words so it stays
           // one quiet line and never turns into a second thing to read.

@@ -23,6 +23,7 @@ class DisplayServer:
         self.settings = {
             "type": "settings",
             "show_english_monitor": bool(cfg.get("display.show_english_monitor", True)),
+            "backlog_bar_full": int(cfg.get("display.backlog_bar_full", 8)),
         }
         self.host = cfg.get("server.host", "127.0.0.1")
         self.port = int(cfg.get("server.port", 8420))
@@ -37,6 +38,7 @@ class DisplayServer:
         # speaker happens to say something new.
         self._recent_lines: list[dict[str, Any]] = []
         self._last_english: dict[str, Any] | None = None
+        self._last_backlog = -1
 
         # Chrome runs the display in a persistent profile, so without this a
         # stale display.js/display.css survives across restarts and the page
@@ -140,6 +142,13 @@ class DisplayServer:
         """The speaker's monitor strip. Never part of the audience's reading."""
         await self.broadcast({"type": "english", "text": text,
                               "partial": partial, "note": note})
+
+    async def send_backlog(self, pending: int) -> None:
+        """How many lines have been said but not yet shown."""
+        if pending == self._last_backlog:
+            return
+        self._last_backlog = pending
+        await self.broadcast({"type": "backlog", "pending": pending})
 
     async def send_level(self, rms: float) -> None:
         await self.broadcast({"type": "level", "rms": rms})

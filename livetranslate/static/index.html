@@ -19,6 +19,10 @@
   <!-- Speaker's monitor strip: the English being recognised right now. Small
        and dim so it never competes with the Portuguese the audience reads,
        but present so "is it hearing me?" is answerable at a glance. -->
+  <!-- Backlog: how far behind the display is. Grows rightward as lines queue
+       up waiting for their reading time. -->
+  <div class="backlog-track"><div id="backlog" class="backlog"></div></div>
+
   <div id="monitor" class="monitor">
     <span id="enText" class="en-text"></span>
     <span id="enPartial" class="en-partial"></span>

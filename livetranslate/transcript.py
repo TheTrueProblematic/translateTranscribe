@@ -33,6 +33,9 @@ class TranscriptWriter:
             directory = Path(__file__).resolve().parent.parent / directory
         self.dir = directory
 
+        # Which config produced this session, so a transcript can be attributed
+        # to normal or ARS mode when reviewing them later.
+        self.mode = Path(cfg.path).name if getattr(cfg, "path", None) else "unknown"
         self.started = datetime.now()
         stamp = self.started.strftime("%Y-%m-%d_%H-%M-%S")
         self.txt_path = self.dir / f"transcript-{stamp}.txt"
@@ -52,6 +55,7 @@ class TranscriptWriter:
             header = (
                 f"# LiveTranslate transcript\n"
                 f"# started {self.started.isoformat(timespec='seconds')}\n"
+                f"# config {self.mode}\n"
                 f"# EN = recognised English, PT = displayed Portuguese\n\n"
             )
             self._txt.write(header)
@@ -93,6 +97,7 @@ class TranscriptWriter:
             "confidence": round(confidence, 4),
             "english_score": round(english_score, 4),
             "chunk_reason": chunk_reason,
+            "config": self.mode,
         }
         if raw_english and raw_english != english:
             record["english_raw"] = raw_english

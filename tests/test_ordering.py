@@ -84,6 +84,9 @@ class FakeServer:
     async def send_english(self, text, partial="", note=""):
         pass
 
+    async def send_backlog(self, pending):
+        pass
+
     async def send_level(self, rms):
         pass
 

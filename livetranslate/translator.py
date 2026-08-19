@@ -21,7 +21,7 @@ from typing import AsyncIterator
 import aiohttp
 
 from .postprocess import capitalize_and_punctuate, postprocess, strip_scaffolding
-from .prompt import SYSTEM_PROMPT
+from .prompt import build_system_prompt
 
 log = logging.getLogger("livetranslate.translator")
 
@@ -41,9 +41,13 @@ class Translator:
         self.timeout_s = float(cfg.get("lmstudio.timeout_s", 20.0))
         self.context_lines = int(cfg.get("lmstudio.context_lines", 2))
 
+        # Built once: may carry a session vocabulary from the config.
+        self.system_prompt = build_system_prompt(cfg)
+
         self._session: aiohttp.ClientSession | None = None
         self._lock = asyncio.Lock()          # one in-flight request, per spec
-        self._context: deque[str] = deque(maxlen=max(0, self.context_lines))
+        # (english, portuguese) pairs, replayed as real chat turns.
+        self._context: deque[tuple[str, str]] = deque(maxlen=max(0, self.context_lines))
 
     # ---------------- lifecycle ----------------
 
@@ -119,16 +123,22 @@ class Translator:
 
     # ---------------- prompting ----------------
 
-    def _build_user_message(self, text: str) -> str:
-        if self._context:
-            prior = "\n".join(self._context)
-            return (
-                "Previous lines, for pronoun and gender agreement only. "
-                "Do not repeat them, do not translate them:\n"
-                f"{prior}\n\n"
-                f"English: {text}\nPortuguese:"
-            )
-        return f"English: {text}\nPortuguese:"
+    def _build_messages(self, text: str) -> list[dict]:
+        """System prompt, prior turns, then the line to translate.
+
+        Context is replayed as genuine user/assistant turns rather than pasted
+        into the user message. Told in prose to "not repeat" the previous
+        lines, this model repeats them anyway -- it prepended the last
+        translation to the next one, so the display showed the same sentence
+        twice and the line grew until the type shrank. As real turns it has
+        nothing to copy: the earlier translations are already its own replies.
+        """
+        messages = [{"role": "system", "content": self.system_prompt}]
+        for prior_en, prior_pt in self._context:
+            messages.append({"role": "user", "content": f"English: {prior_en}\nPortuguese:"})
+            messages.append({"role": "assistant", "content": prior_pt})
+        messages.append({"role": "user", "content": f"English: {text}\nPortuguese:"})
+        return messages
 
     def _payload(self, text: str, stream: bool) -> dict:
         return {
@@ -138,15 +148,12 @@ class Translator:
             "seed": self.seed,
             "max_tokens": self.max_tokens,
             "stream": stream,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": self._build_user_message(text)},
-            ],
+            "messages": self._build_messages(text),
         }
 
-    def remember(self, line: str) -> None:
-        if line and self.context_lines > 0:
-            self._context.append(line)
+    def remember(self, english: str, portuguese: str) -> None:
+        if portuguese and self.context_lines > 0:
+            self._context.append((english, portuguese))
 
     def reset_context(self) -> None:
         self._context.clear()
@@ -201,8 +208,19 @@ class Translator:
 
             final = postprocess(raw, text)
             if final:
-                self.remember(final)
+                final = self._strip_echoed_context(final)
+                self.remember(text, final)
             yield (final, True)
+
+    def _strip_echoed_context(self, line: str) -> str:
+        """Safety net: drop a previous translation the model prepended anyway."""
+        for _prior_en, prior_pt in self._context:
+            if prior_pt and line.startswith(prior_pt):
+                trimmed = line[len(prior_pt):].strip()
+                if trimmed:
+                    log.warning("model echoed prior line; trimmed %r", prior_pt)
+                    return trimmed
+        return line
 
     async def translate(self, text: str) -> str:
         """Non-streaming convenience wrapper, used by tests."""

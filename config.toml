@@ -103,8 +103,30 @@ enroll_seconds = 20
 start_paused = false        # Leave false. True means nothing is displayed until you resume.
 
 [display]
-show_english_monitor = true # Small English strip at the top, for the speaker only.
-                            # Press E on the display to hide it.
+show_english_monitor = true # Small English strip at the bottom, for the speaker
+                            # only. Press E on the display to hide it.
+
+# --- Minimum reading time -------------------------------------------------
+# A line is held on screen long enough to actually be read. If speech outruns
+# reading, later lines wait their turn in a queue rather than flashing past,
+# and the backlog bar along the bottom shows how far behind the display is.
+#
+# Dwell = lead_in + characters / reading_cps, clamped to [min, max].
+# Subtitle practice puts adult reading around 15-17 characters per second; this
+# is deliberately slower, because the audience is reading a translation while
+# also listening to someone speak a language they may not follow.
+reading_cps      = 13.5     # characters per second
+dwell_lead_in_ms = 250      # time to notice the line changed at all
+min_dwell_ms     = 1300     # even three words get a beat
+max_dwell_ms     = 4500     # never hold longer than this, however long the line
+
+# When the queue builds up, dwell is compressed toward min_dwell_ms so the
+# display catches up on its own. At this backlog depth it is fully compressed.
+catchup_backlog  = 6        # backlog depth at which compression is fully applied
+catchup_floor    = 0.55     # never compress a line below this fraction of its
+                            # own reading time -- catching up must not make a
+                            # long sentence unreadable
+backlog_bar_full = 8        # queue depth at which the backlog bar is full width
 font_scale = 1.0            # Live-adjustable with + / - on the display page; persisted in the browser.
 max_lines = 2               # Current line + previous line, per spec.
 prev_opacity = 0.4          # Dimming of the previous line.

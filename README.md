@@ -13,6 +13,27 @@ Double-click **`LiveTranslate.command`**, or from a terminal:
 ./LiveTranslate.command
 ```
 
+### ARS training mode
+
+Double-click **`ARSLiveTranslate.command`** instead. Same app, plus the session
+vocabulary: Max, SHOTOVER Systems, ARS, ATOM, M2, FLIR, PilotDisplay,
+Earthscape, IMU, gimbal, aircraft, AR.
+
+It fixes the terms the recogniser reliably mangles — "hair craft" → aircraft,
+"emu" → IMU, "jimbal"/"jumble" → gimbal, "adam" → ATOM, "shot over" → SHOTOVER
+— and tells the translation model to keep every product name in English. Single
+letters stay single letters, so dictating keyboard shortcuts ("press I", "press
+V") survives.
+
+The corrections are deterministic string rules, not a request to the model, so
+they cannot fail intermittently. The prompt glossary is the second layer, for
+mishearings no rule anticipated.
+
+`config.ars.toml` holds only the vocabulary and `extends = "config.toml"` for
+everything else, so tuning the base config tunes both modes. Add a term by
+editing `[normalizer.corrections]` (a whole word heard wrong) or
+`[normalizer.compounds]` (a word split in two).
+
 First run creates `.venv` and installs dependencies. Later runs skip straight
 to starting. Startup verifies LM Studio is reachable and that the configured
 model is loaded, and fails with a plain-language message if not.
@@ -54,6 +75,14 @@ It starts listening immediately. There is no global hotkey to set up.
 | `+` / `-` | Type size up / down, remembered |
 | `0` | Reset type size |
 | `F` | Toggle fullscreen |
+
+Each line stays on screen long enough to be read — roughly 1.3s for a few
+words up to 4.5s for a full sentence. If you outrun that, later lines **queue**
+rather than flashing past, and the thin bar along the very bottom grows to show
+how far behind the display is: blue is fine, amber means it is lagging, red
+means pause and let it catch up. It compresses the hold as the queue builds so
+it recovers on its own, but never so far that a long sentence becomes
+unreadable.
 
 The small English line along the **bottom** is the speaker's monitor — what the
 recogniser is hearing, live, with the not-yet-committed tail in italic and a
