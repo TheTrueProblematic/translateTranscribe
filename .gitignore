@@ -1,0 +1,9 @@
+.venv/
+wheels/
+models/
+logs/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/audio/*.wav
+docs/test-results.json

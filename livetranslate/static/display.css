@@ -1,0 +1,167 @@
+/* LiveTranslate display surface (spec section 9).
+   Read from several metres away, on a 14" panel or a projector.
+   Legibility beats density: only two lines are ever on screen. */
+
+:root {
+  --bg: #050506;
+  --fg: #F5F5F7;
+  --prev-opacity: 0.4;
+
+  /* Type scale. --scale is the user's live adjustment, persisted in
+     localStorage and nudged with + / -. Sizes are viewport-relative so the
+     same page works unchanged on the built-in panel and on a projector. */
+  --scale: 1;
+  --cur-size: calc(7.6vw * var(--scale));
+  --prev-size: calc(3.2vw * var(--scale));
+
+  /* The previous line lives in a fixed-height band. This is what makes the
+     current line's starting position identical for every line, so nothing
+     jumps when a new line arrives. */
+  --prev-band: 15vh;
+  --pad-x: 3.5vw;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%; height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+  /* System stack: SF Pro is designed for distance legibility and has complete
+     Portuguese diacritic coverage. No webfont, so nothing loads off-machine. */
+  font-family: system-ui, -apple-system, "SF Pro Display", "Avenir Next",
+               "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Monitor strip (English, for the speaker only) */
+.monitor {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  padding: 0.9vh 1.6vw 0.9vh;
+  font-size: 1.9vh;
+  line-height: 1.35;
+  color: var(--fg);
+  opacity: 0.42;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;               /* keep the newest words visible when it overflows */
+  text-align: left;
+  z-index: 9;
+  pointer-events: none;
+}
+.monitor > * { direction: ltr; unicode-bidi: embed; }
+.en-partial { opacity: 0.55; font-style: italic; }
+.en-note { color: #FF9F0A; opacity: 0.95; margin-left: 0.8vw; }
+body.no-monitor .monitor { display: none; }
+
+.stage {
+  width: 100%; height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 4.6vh var(--pad-x) 3vh;   /* room for the monitor strip */
+}
+
+.line {
+  width: 100%;
+  line-height: 1.14;
+  letter-spacing: -0.005em;
+  overflow-wrap: break-word;
+  hyphens: none;
+}
+
+/* Bottom-aligned inside a fixed band: a long previous line grows upward and
+   is clipped at the top, exactly as "older lines scroll off the top" requires,
+   without ever displacing the current line. */
+.prev {
+  height: var(--prev-band);
+  flex: 0 0 var(--prev-band);
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  font-size: var(--prev-size);
+  font-weight: 500;
+  opacity: var(--prev-opacity);
+  color: var(--fg);
+}
+
+/* Top-aligned: the start of the sentence stays put while text streams in. */
+.cur {
+  flex: 1 1 auto;
+  margin-top: 2.2vh;
+  /* --fit is a shrink-only safety valve applied by display.js when an
+     unusually long chunk would otherwise clip. Never grows within a line. */
+  font-size: calc(var(--cur-size) * var(--fit, 1));
+  font-weight: 650;
+  overflow: hidden;
+}
+
+/* Status: small enough never to compete with the text. */
+.status {
+  position: fixed;
+  top: 1.4vh; right: 1.4vw;
+  display: flex; align-items: center; gap: 0.7vw;
+  opacity: 0.5;
+  z-index: 10;
+}
+.dot {
+  width: 1.05vh; height: 1.05vh; min-width: 7px; min-height: 7px;
+  border-radius: 50%;
+  background: #35C759;
+  transition: background-color 140ms linear;
+}
+.glyph {
+  font-size: 1.5vh; min-font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  min-width: 1.2vh;
+}
+.meter {
+  width: 6vw; height: 0.85vh; min-height: 5px;
+  background: rgba(245,245,247,0.16);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.level {
+  height: 100%; width: 0%;
+  background: var(--fg);
+  border-radius: 999px;
+  transition: width 90ms linear;
+}
+
+body.paused .dot { background: #FF9F0A; }
+body.translating .dot { background: #0A84FF; }
+body.offline .dot { background: #FF453A; }
+
+/* Paused: impossible to miss, from the back of the room. */
+.paused-banner {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  display: none;
+  padding: 1.4vh 0;
+  text-align: center;
+  font-size: 3.4vh;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #1a1200;
+  background: #FF9F0A;
+  z-index: 20;
+}
+body.paused .paused-banner { display: block; }
+body.paused .stage { opacity: 0.22; }
+body.paused { box-shadow: inset 0 0 0 0.8vh #FF9F0A; }
+
+/* Font-size feedback, shown only while adjusting. */
+.toast {
+  position: fixed;
+  bottom: 2vh; right: 1.4vw;
+  font-size: 1.6vh;
+  color: var(--fg);
+  opacity: 0;
+  transition: opacity 200ms ease;
+  font-variant-numeric: tabular-nums;
+}
+.toast.show { opacity: 0.55; }

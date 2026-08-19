@@ -1,0 +1,6 @@
+# LiveTranslate dependencies. Apple Silicon / Python 3.10+ only.
+parakeet-mlx>=0.5.2      # streaming English ASR on MLX (Apple GPU/ANE)
+sounddevice>=0.4.6       # built-in mic capture (bundles portaudio in the wheel)
+aiohttp>=3.9             # static display page + websocket, one server
+pytest>=8.0
+pytest-asyncio>=0.23

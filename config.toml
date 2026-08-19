@@ -1,0 +1,168 @@
+# ============================================================================
+# LiveTranslate configuration
+# Everything tunable lives here. Edit, then restart LiveTranslate.
+# Values marked "tune in the room" are the ones worth touching mid-session.
+# ============================================================================
+
+[server]
+host = "127.0.0.1"       # Loopback only. Never bind 0.0.0.0; this box does not serve the network.
+port = 8420              # Display page + websocket both live here.
+open_browser = true      # Launcher opens the display automatically.
+
+[lmstudio]
+base_url = "http://localhost:1234/v1"
+model    = "hunyuan-mt2-1.8b-mlx"   # Benchmarked winner. Changing this changes latency AND quality.
+temperature = 0.0
+top_p = 1.0
+seed = 7                            # Fixed seed => reproducible output for the same input.
+max_tokens = 200                    # A spoken chunk never needs more. Caps runaway generation.
+timeout_s = 20.0                    # Hard ceiling on one translation request.
+context_lines = 2                   # Previous translated lines passed for pronoun/gender agreement.
+
+[asr]
+# English-ONLY model, deliberately. This is tier 1 of the speaker gate: the
+# multilingual v3 transcribes Portuguese as clean Portuguese, or as confident
+# English-looking word salad that passes the coherence gate. See docs/REPORT.md.
+model = "mlx-community/parakeet-tdt-0.6b-v2"
+# Optional local weights directory (config.json + model.safetensors). If it
+# exists it is used instead of downloading from Hugging Face, which makes
+# startup offline and instant. Relative paths resolve from the project root.
+model_path = "models/parakeet-tdt-0.6b-v2"
+sample_rate = 16000
+
+# Recognition runs as a rolling re-decode of a short window rather than through
+# parakeet-mlx's StreamingParakeet, which is unusable for continuous audio in
+# 0.5.2 (see the note at the top of livetranslate/asr.py). These two values set
+# the accuracy/latency balance; measured 0.00-0.05 WER at the defaults.
+decode_interval_ms = 500    # how often the window is re-decoded (~7% GPU duty)
+stability_lag_ms   = 500    # a word must sit this far behind the live edge to
+                            # be committed. Lower = snappier, more corrections.
+context_seconds    = 2.0    # already-committed audio kept for decoding context
+max_window_seconds = 24.0   # hard cap so cost stays flat in a 90 minute session
+
+# The microphone is read in small blocks so the level meter and the
+# voice-activity detector stay responsive.
+mic_block_ms = 160
+
+device = ""                 # "" = system default input. Set a name substring to pin the built-in mic.
+# If no audio has arrived this many seconds after start, say so plainly.
+# Opening the mic without macOS Microphone permission blocks forever rather
+# than failing, so silence is otherwise indistinguishable from a quiet room.
+mic_open_timeout_s = 6.0
+
+[chunker]
+# Emit a chunk on whichever fires FIRST. See spec section 6.
+silence_ms = 400            # Voice-activity silence that closes a chunk.
+max_words = 14              # Word count that closes a chunk.
+max_elapsed_ms = 3500       # Wall-clock since last emit that closes a chunk.
+
+[vad]
+# Voice activity detection feeding the chunker's silence trigger.
+energy_threshold = 0.008    # RMS above this counts as speech. Measured: a quiet room
+                            # peaks around 0.0095, normal speech is far higher.
+hangover_ms = 200           # Speech must be absent this long before silence is declared.
+
+[gate]
+# Tier 2 of the "reject other people's speech" stack (spec section 5).
+# tune in the room ---------------------------------------------------------
+# Mean ASR confidence below this => drop. An English-only model is far less
+# certain about speech it was never trained on, which makes this the most
+# useful automatic filter against other people's Portuguese.
+#
+# Measured from a real session on this machine (logs/livetranslate.log):
+#     your own voice, built-in mic   0.921 - 0.988
+#     quiet / distant room speech     ~0.817
+#     synthesized Portuguese          0.765 - 0.927
+# Those overlap, so this cannot be perfect, and the two failures are not equal:
+# dropping YOUR words means a blank screen, which is what a too-strict setting
+# already cost once. 0.80 sits well below anything you actually said.
+#
+# Tuning it is meant to be quick: every dropped chunk is shown on the English
+# strip at the top of the display with its reason and score, e.g.
+#     dropped (low_confidence, conf 0.74, en 0.61)
+# so raise or lower this from what you actually see, not from guesswork.
+min_confidence = 0.80
+min_english_score = 0.45       # English-ness 0..1 below this => drop. Measured: real English 0.57-0.94, garbled pt_BR 0.00-0.18.
+min_words = 2               # Drop 1-word fragments; they are usually noise, not speech.
+# --------------------------------------------------------------------------
+log_rejections = true       # Rejected text goes to the debug log, NEVER to the display.
+
+[gate.speaker]
+# Tier 3. Disabled: see report / README for the measured reason.
+enabled = false
+threshold = 0.72            # Cosine similarity to the enrolled embedding.
+enroll_seconds = 20
+
+[hotkey]
+# There is no global hotkey any more: it needed macOS Input Monitoring
+# permission and was not worth the setup friction. Hold/resume is SPACE or P on
+# the display window, and pausing now raises a full-width banner so it can
+# never go unnoticed.
+start_paused = false        # Leave false. True means nothing is displayed until you resume.
+
+[display]
+show_english_monitor = true # Small English strip at the top, for the speaker only.
+                            # Press E on the display to hide it.
+font_scale = 1.0            # Live-adjustable with + / - on the display page; persisted in the browser.
+max_lines = 2               # Current line + previous line, per spec.
+prev_opacity = 0.4          # Dimming of the previous line.
+background = "#050506"
+foreground = "#F5F5F7"
+
+[logging]
+dir = "logs"
+level = "DEBUG"        # File log. DEBUG records every decode, word and gate decision.
+max_bytes = 5000000         # Rolling debug log, 5 MB per file.
+backups = 3
+
+# ============================================================================
+# Normalizer rules (spec section 7). Extend these freely.
+# ============================================================================
+
+[normalizer]
+strip_disfluencies = true
+collapse_repeats = true
+convert_clock_times = true
+
+# Spelled-out acronyms. ASR emits separated letters; rejoin them.
+# Key is the letters as spoken (space separated, lowercase). Value is the output.
+[normalizer.acronyms]
+"i m u" = "IMU"
+"l e d" = "LED"
+"u s b" = "USB"
+"g p s" = "GPS"
+"r f"   = "RF"
+"i p"   = "IP"
+"a c"   = "AC"
+"d c"   = "DC"
+"e s c" = "ESC"
+"p i d" = "PID"
+"f p v" = "FPV"
+"l i po" = "LiPo"
+"r p m" = "RPM"
+"c g"   = "CG"
+"a o a" = "AOA"
+
+# Split compound technical words the ASR breaks in two.
+[normalizer.compounds]
+"firm ware" = "firmware"
+"fire wall" = "firewall"
+"hard ware" = "hardware"
+"soft ware" = "software"
+"fuse large" = "fuselage"
+"air frame" = "airframe"
+"way point" = "waypoint"
+"auto pilot" = "autopilot"
+"gim bal" = "gimbal"
+"prop eller" = "propeller"
+"through put" = "throughput"
+"band width" = "bandwidth"
+
+# Truncation repair: ASR clips a word next to a known neighbour.
+# "ver" next to firmware/software is really "version".
+[normalizer.truncations]
+"ver" = { full = "version", neighbours = ["firmware", "software"] }
+
+# Words treated as standalone disfluencies and removed.
+[normalizer.disfluencies]
+words = ["um", "uh", "er", "erm", "ah", "hmm", "mm"]

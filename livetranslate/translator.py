@@ -1,0 +1,213 @@
+"""LM Studio translation client (spec section 8).
+
+One in-flight request at a time, enforced with a lock. No batching, no
+backpressure machinery: chunks arrive every few seconds and a translation
+completes in ~130ms, so the queue provably cannot back up (spec section 6).
+
+Streaming is on so the audience sees text appear while the speaker is still
+talking. The stream yields the *cumulative cleaned line* rather than raw
+deltas, so the display can simply replace the current line each time and never
+has to reason about partial escape sequences or a leaked prefix.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+from collections import deque
+from typing import AsyncIterator
+
+import aiohttp
+
+from .postprocess import capitalize_and_punctuate, postprocess, strip_scaffolding
+from .prompt import SYSTEM_PROMPT
+
+log = logging.getLogger("livetranslate.translator")
+
+
+class LMStudioUnavailable(RuntimeError):
+    """Raised with a human-readable message when the server or model is missing."""
+
+
+class Translator:
+    def __init__(self, cfg):
+        self.base_url = cfg.get("lmstudio.base_url", "http://localhost:1234/v1").rstrip("/")
+        self.model = cfg.get("lmstudio.model", "hunyuan-mt2-1.8b-mlx")
+        self.temperature = float(cfg.get("lmstudio.temperature", 0.0))
+        self.top_p = float(cfg.get("lmstudio.top_p", 1.0))
+        self.seed = cfg.get("lmstudio.seed", 7)
+        self.max_tokens = int(cfg.get("lmstudio.max_tokens", 200))
+        self.timeout_s = float(cfg.get("lmstudio.timeout_s", 20.0))
+        self.context_lines = int(cfg.get("lmstudio.context_lines", 2))
+
+        self._session: aiohttp.ClientSession | None = None
+        self._lock = asyncio.Lock()          # one in-flight request, per spec
+        self._context: deque[str] = deque(maxlen=max(0, self.context_lines))
+
+    # ---------------- lifecycle ----------------
+
+    async def start(self) -> None:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=self.timeout_s)
+            )
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+        self._session = None
+
+    async def preflight(self) -> None:
+        """Verify the server is reachable and the model id exists.
+
+        Raises LMStudioUnavailable with a message meant for a human standing in
+        a classroom, not a stack trace.
+        """
+        await self.start()
+        assert self._session is not None
+        url = f"{self.base_url}/models"
+        try:
+            async with self._session.get(url) as resp:
+                if resp.status != 200:
+                    raise LMStudioUnavailable(
+                        f"LM Studio answered HTTP {resp.status} at {url}.\n"
+                        "Open LM Studio and make sure the local server is running."
+                    )
+                data = await resp.json()
+        except aiohttp.ClientError as exc:
+            raise LMStudioUnavailable(
+                f"Cannot reach LM Studio at {self.base_url}.\n"
+                "Open LM Studio, go to the Developer/Server tab, and start the "
+                f"local server on port {self.base_url.split(':')[-1].split('/')[0]}.\n"
+                f"({exc})"
+            ) from exc
+        except asyncio.TimeoutError as exc:
+            raise LMStudioUnavailable(
+                f"LM Studio did not respond within {self.timeout_s}s at {self.base_url}."
+            ) from exc
+
+        ids = [m.get("id") for m in data.get("data", [])]
+        if self.model not in ids:
+            available = "\n  ".join(ids) or "(none loaded)"
+            raise LMStudioUnavailable(
+                f"Model '{self.model}' is not available in LM Studio.\n"
+                f"Models currently offered:\n  {available}\n"
+                "Download it in LM Studio, or change lmstudio.model in config.toml."
+            )
+
+    async def warmup(self) -> float:
+        """Force LM Studio to actually load the model, before anyone speaks.
+
+        preflight() only lists models, which with JIT loading does not load
+        anything -- so without this the model stays unloaded until the first
+        phrase, the first translation pays the whole load time, and a silent
+        pipeline is indistinguishable from a broken one because nothing ever
+        appears in LM Studio. Returns seconds taken.
+        """
+        t0 = time.perf_counter()
+        out = await self.translate("this is a microphone test")
+        elapsed = time.perf_counter() - t0
+        self.reset_context()          # never let the warmup leak into context
+        log.info("LM Studio warmup: %.2fs, model returned %r", elapsed, out)
+        if not out:
+            raise LMStudioUnavailable(
+                f"LM Studio accepted the request but returned nothing for model "
+                f"'{self.model}'. Check that the model loads correctly in LM Studio."
+            )
+        return elapsed
+
+    # ---------------- prompting ----------------
+
+    def _build_user_message(self, text: str) -> str:
+        if self._context:
+            prior = "\n".join(self._context)
+            return (
+                "Previous lines, for pronoun and gender agreement only. "
+                "Do not repeat them, do not translate them:\n"
+                f"{prior}\n\n"
+                f"English: {text}\nPortuguese:"
+            )
+        return f"English: {text}\nPortuguese:"
+
+    def _payload(self, text: str, stream: bool) -> dict:
+        return {
+            "model": self.model,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "seed": self.seed,
+            "max_tokens": self.max_tokens,
+            "stream": stream,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": self._build_user_message(text)},
+            ],
+        }
+
+    def remember(self, line: str) -> None:
+        if line and self.context_lines > 0:
+            self._context.append(line)
+
+    def reset_context(self) -> None:
+        self._context.clear()
+
+    # ---------------- translation ----------------
+
+    async def translate_stream(self, text: str) -> AsyncIterator[tuple[str, bool]]:
+        """Yield (cumulative_line, is_final). Holds the single-flight lock."""
+        await self.start()
+        assert self._session is not None
+
+        async with self._lock:
+            raw = ""
+            try:
+                async with self._session.post(
+                    f"{self.base_url}/chat/completions",
+                    json=self._payload(text, stream=True),
+                    headers={"Content-Type": "application/json"},
+                ) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        log.error("translation HTTP %s: %s", resp.status, body[:300])
+                        yield ("", True)
+                        return
+
+                    async for line_bytes in resp.content:
+                        line = line_bytes.decode("utf-8", "ignore").strip()
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = obj.get("choices") or [{}]
+                        delta = (choices[0].get("delta") or {}).get("content") or ""
+                        if not delta:
+                            continue
+                        raw += delta
+                        partial = strip_scaffolding(raw)
+                        if partial:
+                            # Capitalize as we go; the terminal period waits
+                            # for completion so it does not flicker in and out.
+                            yield (partial[0].upper() + partial[1:], False)
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                log.error("translation failed for %r: %s", text, exc)
+                final_err = postprocess(raw, text) if raw else ""
+                yield (final_err, True)
+                return
+
+            final = postprocess(raw, text)
+            if final:
+                self.remember(final)
+            yield (final, True)
+
+    async def translate(self, text: str) -> str:
+        """Non-streaming convenience wrapper, used by tests."""
+        final = ""
+        async for line, is_final in self.translate_stream(text):
+            if is_final:
+                final = line
+        return final

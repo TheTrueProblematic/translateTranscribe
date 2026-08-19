@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LiveTranslate</title>
+<link rel="stylesheet" href="display.css">
+</head>
+<body>
+  <!-- Status is deliberately wordless: the spec forbids English on the display
+       surface, and the audience should never be distracted by it. Colour +
+       glyph + mic meter carry the state for the speaker. -->
+  <div id="status" class="status" aria-hidden="true">
+    <span id="dot" class="dot"></span>
+    <span id="glyph" class="glyph"></span>
+    <div class="meter"><div id="level" class="level"></div></div>
+  </div>
+
+  <!-- Speaker's monitor strip: the English being recognised right now. Small
+       and dim so it never competes with the Portuguese the audience reads,
+       but present so "is it hearing me?" is answerable at a glance. -->
+  <div id="monitor" class="monitor">
+    <span id="enText" class="en-text"></span>
+    <span id="enPartial" class="en-partial"></span>
+    <span id="enNote" class="en-note"></span>
+  </div>
+
+  <!-- Paused is a full-width banner, not a small dot. A silent pause once cost
+       an entire session. -->
+  <div id="pausedBanner" class="paused-banner">⏸ PAUSADO</div>
+
+  <main id="stage" class="stage">
+    <div id="prev" class="line prev"></div>
+    <div id="cur"  class="line cur"></div>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="display.js"></script>
+</body>
+</html>
