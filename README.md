@@ -10,12 +10,33 @@ English and shown in blue, so I can read the reply without losing the thread.
 
 ---
 
+Runs on macOS and Windows 11.
+
 ## Requirements
 
-- Apple Silicon Mac, macOS current release
+**macOS**
+
+- Apple Silicon, current release
 - Python 3.10 or newer (arm64 — the Intel build cannot run MLX)
-- LM Studio running its local server on `http://localhost:1234`, with
-  `hunyuan-mt2-1.8b-mlx` available
+- LM Studio serving `hunyuan-mt2-1.8b-mlx`
+
+**Windows 11**
+
+- Python 3.10 or newer from python.org (tick "Add python.exe to PATH")
+- LM Studio serving `Hunyuan-MT-7B`. There is no GGUF build of the Mac's
+  `hunyuan-mt2-1.8b-mlx` — MLX is Apple-only — so Windows uses the 7B model.
+  In LM Studio, search for **Hunyuan-MT-7B** and take the **Q4_K_M**
+  quantisation, about 4.6 GB.
+- A CUDA GPU is optional and makes recognition several times faster
+
+LM Studio can run on a different machine:
+
+```
+LiveTranslate.bat --lmstudio 192.168.1.50
+```
+
+A bare host, `host:port`, or a full URL all work. On macOS pass the same flag,
+or set `lmstudio.base_url` in the config.
 
 Microphone permission is required. Without it macOS never returns from opening
 the input stream rather than failing, so the app would look healthy while
@@ -27,14 +48,41 @@ Microphone.
 
 ## Running it
 
+### macOS
+
 Double-click `LiveTranslate.command`, or from a terminal:
 
 ```bash
 ./LiveTranslate.command
 ```
 
+### Windows
+
+Double-click `LiveTranslate.bat`. This is the main way it runs on Windows: an
+always-on-top strip of subtitles that floats over whatever is on screen, so it
+works over a presentation, a video call, or the software being demonstrated.
+
+| | |
+|---|---|
+| `LiveTranslate.bat` | Subtitle overlay |
+| `ARSLiveTranslate.bat` | The same, with the ARS vocabulary |
+| `LiveTranslateBrowser.bat` | Full-screen browser display, as on the Mac |
+| `Diagnose.bat` | Self-test, run this first when something is wrong |
+
+System-wide hotkeys, which work whichever application has focus:
+
+| Key | What it does |
+|---|---|
+| `Ctrl+Alt+S` | Show and hide the subtitles |
+| `Ctrl+Alt+T` | Move them between the bottom and the top of the screen |
+| `Ctrl+Alt+P` | Pause and resume recognition |
+
+White text on a partly transparent black band, never more than two lines. A
+long sentence shrinks to fit before anything is dropped. Room speech translated
+back into English appears in blue, as it does on the full-screen display.
+
 First run creates a virtualenv and installs dependencies, which takes a few
-minutes. Later runs go straight to starting. Startup checks that LM Studio is
+minutes, and downloads the speech model. Later runs go straight to starting. Startup checks that LM Studio is
 reachable and loads the translation model before anything else, so the first
 sentence does not pay for it.
 
@@ -127,8 +175,15 @@ between sessions:
 | `display.reading_cps` | Reading speed the hold time is calculated from |
 | `display.min_dwell_ms` | Shortest a line may stay on screen |
 
-`config.ars.toml` holds only the ARS vocabulary and inherits everything else
-from `config.toml`, so tuning the base tunes both modes. To teach it a new term,
+The configs inherit rather than duplicate, so tuning the base tunes everything:
+
+```
+config.toml              shared settings, and the macOS build
+config.ars.toml          ARS vocabulary only
+config.windows.toml      Windows: recogniser, overlay, reading speed
+config.windows.ars.toml  both of the above
+```
+ To teach it a new term,
 add to `[normalizer.corrections]` for a whole word heard wrong, or
 `[normalizer.compounds]` for one split in two.
 
@@ -183,7 +238,7 @@ If nothing is appearing on screen, that line says which stage is silent.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest -q -m "not slow"                      # 267 tests
+.venv/bin/python -m pytest -q -m "not slow"                      # 335 tests
 .venv/bin/python -m pytest -q -m "not slow and not integration"  # no LM Studio needed
 .venv/bin/python -m pytest tests/test_soak.py -m slow -s         # 15 minute soak
 ```
@@ -213,7 +268,12 @@ livetranslate/
   diagnose.py      the self-test
   logging_setup.py rolling debug log
   config.py        settings loading, including config inheritance
-  static/          the display surface
+  overlay.py       the always-on-top subtitle window (Windows)
+  overlay_app.py   runs the pipeline behind the overlay
+  asr_whisper.py   speech recognition on Windows (faster-whisper)
+  asr_backend.py   picks the recogniser for the platform
+  hotkeys_win.py   system-wide hotkeys on Windows
+  static/          the browser display surface
 
 config.toml        all settings
 config.ars.toml    ARS vocabulary, inherits the above

@@ -22,6 +22,10 @@ class Word:
     start: float                 # seconds on the audio timeline
     end: float
     confidence: float = 1.0
+    # Language reported by the recogniser itself, when the backend can say.
+    # faster-whisper detects it per decode; parakeet-mlx cannot, and leaves
+    # this None so the gate falls back to scoring the text.
+    language: str | None = None
 
 
 @dataclass
@@ -42,6 +46,19 @@ class Chunk:
     @property
     def word_count(self) -> int:
         return len(self.words)
+
+    @property
+    def language(self) -> str | None:
+        """Language the recogniser reported, if it reports one at all.
+
+        Majority vote across the chunk's words; ties and absent labels give
+        None, which tells the gate to score the text instead.
+        """
+        labels = [w.language for w in self.words if w.language]
+        if not labels:
+            return None
+        top = max(set(labels), key=labels.count)
+        return top if labels.count(top) > len(labels) / 2 else None
 
 
 class Chunker:

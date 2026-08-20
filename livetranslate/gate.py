@@ -66,6 +66,10 @@ class Gate:
         self.dual = self.dual_enabled
         self.pt_min = float(cfg.get("dual.portuguese_min", 0.30))
         self.lang_margin = float(cfg.get("dual.margin", 0.10))
+        # How sure the text has to be before it overrules the recogniser's own
+        # language label. Both conditions must hold.
+        self.override_min = float(cfg.get("dual.text_override_min", 0.55))
+        self.override_max = float(cfg.get("dual.text_override_max", 0.20))
 
         self.speaker_enabled = bool(cfg.get("gate.speaker.enabled", False))
         self.speaker_threshold = float(cfg.get("gate.speaker.threshold", 0.72))
@@ -92,7 +96,8 @@ class Gate:
     # ---------------- evaluation ----------------
 
     def evaluate(self, text: str, confidence: float = 1.0,
-                 audio=None, word_count: int | None = None) -> GateDecision:
+                 audio=None, word_count: int | None = None,
+                 asr_language: str | None = None) -> GateDecision:
         # Tier 4 first: when held, nothing gets through, whatever the scores say.
         if self.paused:
             self.stats["paused"] += 1
@@ -122,6 +127,29 @@ class Gate:
                 scored, english_min=self.min_english,
                 portuguese_min=self.pt_min, margin=self.lang_margin,
             )
+            # Some backends identify the language themselves (faster-whisper
+            # does; parakeet-mlx cannot). That label comes from the audio, so
+            # it is usually better evidence than scoring the spelling -- but it
+            # is not infallible: on a heavily accented Portuguese clip Whisper
+            # reported "en" with probability 0.95 while the text scored
+            # en=0.00 pt=0.68. So the label wins by default, and only loses to
+            # a decisive disagreement from the text.
+            if asr_language in ("en", "pt"):
+                if lang is not None and lang != asr_language:
+                    winner = pt if lang == "pt" else eng
+                    loser = eng if lang == "pt" else pt
+                    decisive = (winner >= self.override_min
+                                and loser <= self.override_max)
+                    log.info(
+                        "language disagreement: recogniser=%s text=%s "
+                        "(en=%.2f pt=%.2f) -> using %s",
+                        asr_language, lang, eng, pt,
+                        lang if decisive else asr_language,
+                    )
+                    if not decisive:
+                        lang = asr_language
+                else:
+                    lang = asr_language
             if lang is None:
                 self.stats["language"] += 1
                 d = self._reject(text, "no_language", eng, confidence)

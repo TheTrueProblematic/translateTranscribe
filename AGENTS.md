@@ -9,7 +9,7 @@ the end, which is mandatory.
 
 ## 1. What this is
 
-A local live-captioning system. Max, a presenter at SHOTOVER Systems, speaks
+A local live-captioning system, on macOS and Windows 11. Max, a presenter at SHOTOVER Systems, speaks
 English to a room of Brazilian Portuguese speakers. The audience reads a
 Portuguese translation off a projector or his laptop screen. When someone in
 the room answers in Portuguese, that is translated back into English for him,
@@ -40,11 +40,25 @@ several design decisions only make sense in that light:
 
 ## 2. Running it
 
+macOS:
+
 ```bash
 ./LiveTranslate.command                     # normal mode
 ./ARSLiveTranslate.command                  # ARS training mode (adds vocabulary)
 .venv/bin/python -m livetranslate --diagnose   # self-test each stage
 ```
+
+Windows 11:
+
+```bat
+LiveTranslate.bat            always-on-top subtitle overlay (the main way)
+ARSLiveTranslate.bat         the same, with the ARS vocabulary
+LiveTranslateBrowser.bat     full-screen browser display, as on the Mac
+Diagnose.bat                 self-test each stage
+```
+
+LM Studio elsewhere on the network: `LiveTranslate.bat --lmstudio 192.168.1.50`
+(bare host, host:port, or a full URL).
 
 Requires LM Studio running on `http://localhost:1234` with
 `hunyuan-mt2-1.8b-mlx` available. First run creates `.venv` and installs
@@ -56,7 +70,7 @@ macOS Microphone permission is required. Without it, opening the input stream
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest -q -m "not slow"              # 267 tests, ~2 min
+.venv/bin/python -m pytest -q -m "not slow"              # 335 tests, ~2 min
 .venv/bin/python -m pytest -q -m "not slow and not integration"   # no LM Studio needed
 .venv/bin/python -m pytest tests/test_soak.py -m slow -s # 15 minute soak
 ```
@@ -88,7 +102,12 @@ and the heartbeat.
 
 | file | responsibility |
 |---|---|
-| `asr.py` | Mic capture, rolling decode, word commitment. The most subtle file. |
+| `asr.py` | macOS only: mic capture, rolling decode, word commitment. The most subtle file. |
+| `asr_whisper.py` | Windows and everything else: faster-whisper, utterance decoding. |
+| `asr_backend.py` | Chooses between the two. `auto` follows the platform. |
+| `overlay.py` | The always-on-top subtitle window (tkinter). |
+| `overlay_app.py` | Runs the pipeline behind the overlay: asyncio thread plus tkinter main thread. |
+| `hotkeys_win.py` | System-wide hotkeys on Windows, via ctypes and RegisterHotKey. |
 | `chunker.py` | Groups words into translatable chunks on three triggers. |
 | `normalizer.py` | Deterministic text repair before translation. |
 | `langid.py` | English and Portuguese scoring; routes each line. |
@@ -169,7 +188,40 @@ back into the prompt text.
 The two directions keep **separate** contexts. Sharing them makes the model
 answer the wrong conversation.
 
-### 4.6 Config layering
+### 4.6 Whisper pads everything to thirty seconds
+
+faster-whisper decodes a 1.5 second clip and an 8 second clip in about the same
+time (measured: 1490ms versus 1681ms), because Whisper pads every input to
+thirty seconds internally.
+
+This makes the macOS rolling re-decode strategy **impossible** on the Windows
+backend: re-decoding a short window several times a second costs more than the
+interval it runs on, and the backlog grows without bound. The first attempt did
+exactly this and never kept up.
+
+`asr_whisper.py` therefore decodes **once per utterance**, cut on silence by
+the VAD, and never decodes silence at all. Words are final when they arrive, so
+there is no local agreement step and no stability lag. If you are tempted to
+unify the two backends onto one strategy, this is why they differ.
+
+### 4.7 Batch files need CRLF, and cmd.exe expands blocks early
+
+`.bat` files are stored with CRLF (`.gitattributes` enforces `*.bat text
+eol=crlf`). LF-only batch files misparse `goto` labels on some Windows builds.
+
+`scripts/bootstrap.bat` is written with `goto` rather than parenthesised
+`if` blocks on purpose: cmd.exe expands `%VAR%` for an entire block when it
+parses it, so a variable set by a subroutine inside a block reads as empty on
+the next line of that same block. The first version had exactly that bug.
+
+### 4.8 One Tk root per process
+
+Creating and destroying several `tk.Tk()` roots in one process segfaults Tk on
+macOS and is discouraged everywhere. `tests/test_overlay.py` uses a single
+module-scoped root and resets its state between tests. Do not convert that
+fixture to function scope.
+
+### 4.9 Config layering
 
 `config.ars.toml` declares `extends = "config.toml"` and overrides only the
 session vocabulary. Tables merge key by key. Do not fork the config into two
@@ -182,6 +234,46 @@ asserts the shared settings stay identical.
 
 Where a decision was reversed, both sides are recorded. Reversals are the
 easiest thing for a new agent to undo by accident.
+
+### Two ASR backends, and why they behave differently
+
+MLX runs only on Apple Silicon, so Windows cannot use parakeet-mlx at all. The
+second backend is faster-whisper (CTranslate2), which has Windows wheels and
+runs on CPU or CUDA.
+
+They are not interchangeable in behaviour:
+
+| | parakeet-mlx (macOS) | faster-whisper (Windows) |
+|---|---|---|
+| strategy | rolling re-decode, local agreement | one decode per utterance |
+| text appears | while the phrase is still being said | after the speaker pauses |
+| reports language | no | yes, and the router prefers it |
+| decode cost | ~35-60 ms | ~440 ms (base), ~1530 ms (small) |
+| ready latency | ~1.3 s | ~3 s on CPU |
+
+`asr.backend = "auto"` picks by platform, so one config works on both.
+
+### Whisper identifies the language, but not infallibly
+
+Whisper reports the spoken language, which is better evidence than scoring the
+spelling of a transcript, so the gate prefers it. But on a heavily accented
+Portuguese clip it reported "en" with probability 0.95 while the text scored
+en=0.00 pt=0.68.
+
+So the label wins by default and loses only to a decisive disagreement from the
+text (`dual.text_override_min` / `text_override_max`). Every disagreement is
+logged. Neither signal alone was good enough.
+
+### Windows uses a different translation model, of necessity
+
+There is no GGUF build of Hunyuan-MT2 1.8B: it exists only in MLX, which is
+Apple-only. Windows uses `Hunyuan-MT-7B` (GGUF, Q4_K_M) instead. The prompt and
+its worked examples were tuned against MT2; they carry over, but if Windows
+output drifts in style that is the first thing to suspect.
+
+`Translator.preflight()` accepts a single unambiguous near-match on the model
+id, because LM Studio names the MLX and GGUF builds differently and a naming
+mismatch is a bad reason to fail to start.
 
 ### ASR model: multilingual v3 (reversed once)
 
@@ -202,7 +294,13 @@ instead of v2's ambiguous 0.301.
 **If `dual.enabled` is set to false, switch back to v2.** In single-language
 mode, v2's inability to speak Portuguese is a feature.
 
-### Language routing is text-based
+### Language routing uses whatever evidence exists
+
+On macOS it is text-based, because parakeet-mlx cannot report a language. On
+Windows the recogniser's own label is preferred, overruled only by a decisive
+text disagreement. Both paths end at `detect_language()` in `langid.py`.
+
+### Text-based routing
 
 v3's vocabulary contains `<|en|>` and `<|pt|>` tokens, but parakeet-mlx's greedy
 decode never emits them. Routing uses `english_score()` and `portuguese_score()`
@@ -236,8 +334,21 @@ threshold moves outside the measured window in either direction.
 
 ### Reading time
 
-Lines hold the screen for `lead_in + characters / 13.5 cps`, clamped to
-1.3–4.5 s. Under backlog the hold compresses toward a floor **proportional to
+Lines hold the screen for `lead_in + characters / reading_cps`, clamped. The
+speeds were raised after real use: 13.5 cps with a 4.5 s cap held lines longer
+than anyone needed and pushed everything behind them further out of step with
+the speaker.
+
+| | reading_cps | min | max |
+|---|---|---|---|
+| full-screen display | 18.0 | 1.0 s | 3.2 s |
+| Windows overlay | 22.0 | 0.8 s | 2.4 s |
+
+The overlay is faster because its type is far smaller, so two lines hold about
+a third more text, and because its recogniser is slower per utterance: the hold
+is where that time has to be given back.
+
+Under backlog the hold compresses toward a floor **proportional to
 the line's own reading time** (`catchup_floor = 0.55`), never a flat minimum —
 a flat floor squeezes a long sentence into the same glance a three-word one
 gets, which is the bug this was built to fix.
@@ -257,6 +368,16 @@ Re-measure before trusting these if the pipeline has changed.
 | ASR decode cost | ~35–60 ms per 500 ms, ~7% GPU duty |
 | ASR WER, synthesized fixtures | 0.045 technical, 0.000 conversational |
 | Soak, 15 min continuous | no crash, RSS +3.2%, latency drift 1.43x |
+
+Windows, measured on this Mac's CPU as a stand-in (a Windows laptop will
+differ, and CUDA changes it entirely):
+
+| | value |
+|---|---|
+| Whisper decode, per utterance | 440 ms (base), 1533 ms (small) |
+| Whisper WER, English fixture | 0.045 (base), 0.023 (small) |
+| Ready latency, full pipeline | ~3 s median on CPU |
+| Real-time factor, full pipeline | keeps up: 33 s wall for 31 s of audio |
 
 The sub-1-second target from the original brief is **not met** for phrase-final
 text and cannot be, given a spec-mandated 400 ms silence detection plus the ASR
@@ -308,6 +429,9 @@ if it is updated as the code changes.
    number is worse than no number, because it will be trusted.
 6. **Changes how the project is run or tested** — update section 2 and the
    README together.
+7. **Changes behaviour on one platform only** — say which. A reader on the
+   other platform must not act on it. Every claim here that is true of only
+   one of macOS or Windows says so explicitly.
 
 ### Rules for writing entries
 
@@ -343,6 +467,11 @@ language routing, reading-time queueing, transcripts, diagnostics.
 
 ### Known limitations
 
+- **Nothing on Windows has been run on Windows.** It was developed and tested
+  on macOS: faster-whisper, tkinter and the config layering all run here and
+  are covered by tests, but `RegisterHotKey`, the `.bat` launchers and the
+  overlay's always-on-top behaviour over a real presentation have never
+  executed on the target platform. Those are the three things to check first.
 - **The Portuguese direction has never been tested with a real speaker.** All
   Portuguese validation used macOS `say` voices. Routing was clean on 400 real
   English lines, so the speaker's own words are safe, but how the system
@@ -365,7 +494,8 @@ language routing, reading-time queueing, transcripts, diagnostics.
 
 ### If you are picking this up cold
 
-1. Run `--diagnose`. It tests each stage in the order it can fail.
+1. Run `--diagnose` (or `Diagnose.bat`). It tests each stage in the order it
+   can fail, and reports which backend it chose.
 2. Read `docs/REPORT.md` for the full history, including measurements and
    everything that was tried and rejected.
 3. Read `livetranslate/asr.py`'s module docstring before touching recognition.

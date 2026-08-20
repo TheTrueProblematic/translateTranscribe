@@ -244,7 +244,8 @@ class Pipeline:
             log.debug("normalized [%d] %r -> %r", chunk.seq, chunk.text, normalized)
 
         decision = self.gate.evaluate(
-            normalized, confidence=chunk.mean_confidence, word_count=chunk.word_count
+            normalized, confidence=chunk.mean_confidence,
+            word_count=chunk.word_count, asr_language=chunk.language,
         )
         if not decision.accepted:
             self.stats["rejected"] += 1

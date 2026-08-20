@@ -44,21 +44,30 @@ class Config:
         with open(p, "rb") as fh:
             data = tomllib.load(fh)
 
-        # A config may declare `extends = "config.toml"` and override only what
-        # differs. That keeps the shared settings -- thresholds, model ids,
-        # timings -- in one file, so tuning the base does not silently leave a
-        # second mode behind on stale values.
-        base_name = data.pop("extends", None)
-        if base_name:
-            base_path = Path(base_name)
-            if not base_path.is_absolute():
-                base_path = p.parent / base_path
-            if not base_path.exists():
-                raise FileNotFoundError(
-                    f"{p.name} extends {base_name}, which does not exist at {base_path}."
-                )
-            base = cls.load(base_path)
-            data = _deep_merge(base._data, data)
+        # A config may declare `extends = "config.toml"`, or a list of files,
+        # and override only what differs. That keeps the shared settings --
+        # thresholds, model ids, timings -- in one file, so tuning the base
+        # does not silently leave another mode behind on stale values.
+        #
+        # With a list, later parents win over earlier ones, and this file wins
+        # over all of them. That is what lets ARS-on-Windows combine the
+        # Windows settings with the ARS vocabulary without either being copied.
+        parents = data.pop("extends", None)
+        if parents:
+            if isinstance(parents, str):
+                parents = [parents]
+            merged: dict[str, Any] = {}
+            for name in parents:
+                base_path = Path(name)
+                if not base_path.is_absolute():
+                    base_path = p.parent / base_path
+                if not base_path.exists():
+                    raise FileNotFoundError(
+                        f"{p.name} extends {name}, which does not exist at "
+                        f"{base_path}."
+                    )
+                merged = _deep_merge(merged, cls.load(base_path)._data)
+            data = _deep_merge(merged, data)
 
         return cls(data, p)
 

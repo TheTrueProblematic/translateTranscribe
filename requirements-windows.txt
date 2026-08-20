@@ -1,0 +1,8 @@
+# LiveTranslate dependencies for Windows.
+# MLX is Apple Silicon only, so the recogniser here is faster-whisper.
+faster-whisper>=1.1.0    # speech recognition (CTranslate2), CPU or CUDA
+sounddevice>=0.4.6       # microphone capture (bundles portaudio in the wheel)
+aiohttp>=3.9             # display page + websocket, one server
+pytest>=8.0
+pytest-asyncio>=0.23
+# tkinter powers the subtitle overlay and ships with the python.org installer.

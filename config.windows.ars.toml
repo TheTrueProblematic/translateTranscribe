@@ -1,0 +1,12 @@
+# LiveTranslate - ARS training mode on Windows.
+#
+# Combines the Windows settings with the ARS session vocabulary. Both are
+# inherited rather than copied, so editing either one updates this too.
+#
+# ORDER MATTERS. Later parents win, and config.ars.toml itself extends
+# config.toml, so listing it second would drag the macOS timings back in and
+# quietly undo the Windows ones. ARS first, Windows second: the vocabulary
+# survives (Windows defines none of it) and the Windows settings win.
+#
+# Launch with ARSLiveTranslate.bat.
+extends = ["config.ars.toml", "config.windows.toml"]

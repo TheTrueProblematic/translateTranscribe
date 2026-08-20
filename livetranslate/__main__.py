@@ -25,6 +25,30 @@ from livetranslate.translator import LMStudioUnavailable, Translator
 log = logging.getLogger("livetranslate.main")
 
 
+def apply_lmstudio_override(cfg, value: str | None) -> None:
+    """Point at LM Studio on another machine.
+
+    Accepts a bare host ("192.168.1.50"), host:port, or a full URL. Anything
+    without a scheme gets http://, and anything without a path gets /v1, so
+    all the obvious spellings work.
+    """
+    if not value:
+        return
+    text = value.strip().rstrip("/")
+    if "://" not in text:
+        text = "http://" + text
+    scheme, _, rest = text.partition("://")
+    host, slash, path = rest.partition("/")
+    if ":" not in host:
+        host = f"{host}:1234"
+    path = f"/{path}" if slash and path else ""
+    if not path or path == "/":
+        path = "/v1"
+    url = f"{scheme}://{host}{path}"
+    cfg._data.setdefault("lmstudio", {})["base_url"] = url
+    log.info("LM Studio overridden to %s", url)
+
+
 def die(message: str) -> None:
     print(f"\nLiveTranslate cannot start.\n\n{message}\n", file=sys.stderr)
     sys.exit(1)
@@ -32,6 +56,7 @@ def die(message: str) -> None:
 
 async def run(args) -> None:
     cfg = Config.load(args.config)
+    apply_lmstudio_override(cfg, args.lmstudio)
     log_path = setup_logging(cfg)
     log.info("=== LiveTranslate starting ===")
 
@@ -76,7 +101,7 @@ async def run(args) -> None:
     loop = asyncio.get_running_loop()
     asr = None
     if not args.no_asr:
-        from livetranslate.asr import ParakeetASR
+        from livetranslate.asr_backend import create_asr
 
         def on_word(word):
             asyncio.ensure_future(pipeline.feed_word(word))
@@ -97,8 +122,13 @@ async def run(args) -> None:
             pipeline.set_listening(ok)
             asyncio.ensure_future(pipeline.publish_status())
 
-        asr = ParakeetASR(cfg, loop, on_word, on_tick, on_level, on_state,
-                          on_epoch, on_partial)
+        try:
+            asr = create_asr(cfg, loop, on_word, on_tick, on_level, on_state,
+                             on_epoch, on_partial)
+        except RuntimeError as exc:
+            await pipeline.stop()
+            await server.stop()
+            die(str(exc))
         asr.start()
         try:
             # The worker thread owns the model (MLX streams are thread-local).
@@ -203,8 +233,24 @@ def main() -> None:
     ap.add_argument("--no-asr", action="store_true", help="display/server only, no microphone")
     ap.add_argument("--diagnose", action="store_true",
                     help="run a self-test of mic, ASR and LM Studio, then exit")
+    ap.add_argument("--overlay", action="store_true",
+                    help="always-on-top subtitle window instead of the browser display")
+    ap.add_argument("--lmstudio", metavar="HOST[:PORT]|URL",
+                    help="LM Studio on another machine, e.g. 192.168.1.50")
     args = ap.parse_args()
     try:
+        if args.overlay:
+            from livetranslate.config import Config
+            from livetranslate.logging_setup import setup_logging
+            from livetranslate.overlay_app import OverlayApp
+            try:
+                cfg = Config.load(args.config)
+            except FileNotFoundError as exc:
+                die(str(exc))
+            apply_lmstudio_override(cfg, args.lmstudio)
+            setup_logging(cfg)
+            log.info("=== LiveTranslate starting (overlay) ===")
+            sys.exit(OverlayApp(cfg, args).run())
         if args.diagnose:
             from livetranslate.diagnose import run_diagnostics
             sys.exit(asyncio.run(run_diagnostics(args.config)))

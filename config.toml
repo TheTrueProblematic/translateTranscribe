@@ -102,13 +102,14 @@ show_english_monitor = true # Small English strip at the bottom, for the speaker
 # and the backlog bar along the bottom shows how far behind the display is.
 #
 # Dwell = lead_in + characters / reading_cps, clamped to [min, max].
-# Subtitle practice puts adult reading around 15-17 characters per second; this
-# is deliberately slower, because the audience is reading a translation while
-# also listening to someone speak a language they may not follow.
-reading_cps      = 13.5     # characters per second
-dwell_lead_in_ms = 250      # time to notice the line changed at all
-min_dwell_ms     = 1300     # even three words get a beat
-max_dwell_ms     = 4500     # never hold longer than this, however long the line
+# Subtitle practice puts adult reading around 15-17 characters per second.
+# These sit above that: an audience following a live talk reads the screen in
+# glances rather than word by word, and holding a line after it has been read
+# just puts everything behind it further out of step with the speaker.
+reading_cps      = 18.0     # characters per second
+dwell_lead_in_ms = 200      # time to notice the line changed at all
+min_dwell_ms     = 1000     # even three words get a beat
+max_dwell_ms     = 3200     # never hold longer than this, however long the line
 
 # When the queue builds up, dwell is compressed toward min_dwell_ms so the
 # display catches up on its own. At this backlog depth it is fully compressed.
@@ -132,6 +133,15 @@ foreground = "#F5F5F7"
 enabled = true
 portuguese_min = 0.30       # Portuguese-ness needed to route a line as Portuguese
 margin = 0.10               # how far Portuguese must beat English to win the toss
+
+# Some recognisers report the language themselves (faster-whisper does on
+# Windows; the macOS one cannot). That label normally wins, because it comes
+# from the audio rather than from spelling -- but it is not infallible, so a
+# decisive disagreement from the text scores overrules it. Both must hold:
+# the winning score at or above the first value, the losing one at or below
+# the second. Every disagreement is logged either way.
+text_override_min = 0.55
+text_override_max = 0.20
 
 # Confidence floor used INSTEAD of gate.min_confidence while dual mode is on.
 # It can be much looser here, because deciding what is Portuguese is now the

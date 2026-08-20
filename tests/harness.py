@@ -89,7 +89,7 @@ class OfflineRun:
         self.asr = None
 
     async def __aenter__(self):
-        from livetranslate.asr import ParakeetASR
+        from livetranslate.asr_backend import create_asr
 
         loop = asyncio.get_running_loop()
         await self.pipeline.start()
@@ -106,11 +106,16 @@ class OfflineRun:
         def on_epoch(e):
             self.pipeline.audio_epoch = e
 
-        # The model is loaded by the ASR's own worker thread: MLX streams are
-        # thread-local, so a model cannot be shared across runs.
-        self.asr = ParakeetASR(self.cfg, loop, on_word, on_tick, on_level, None, on_epoch)
+        # Whichever backend the config selects, so the same tests exercise the
+        # macOS and Windows recognisers. The model is loaded by the ASR's own
+        # worker thread: MLX streams are thread-local, so a model cannot be
+        # shared across runs.
+        self.asr = create_asr(self.cfg, loop, on_word, on_tick, on_level,
+                              None, on_epoch)
         self.asr.start(use_microphone=False)
-        await asyncio.get_running_loop().run_in_executor(None, self.asr.wait_ready)
+        await asyncio.get_running_loop().run_in_executor(
+            None, lambda: self.asr.wait_ready(300)
+        )
         return self
 
     async def __aexit__(self, *exc):

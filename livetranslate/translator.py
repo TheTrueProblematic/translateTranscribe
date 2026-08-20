@@ -99,14 +99,38 @@ class Translator:
                 f"LM Studio did not respond within {self.timeout_s}s at {self.base_url}."
             ) from exc
 
-        ids = [m.get("id") for m in data.get("data", [])]
-        if self.model not in ids:
-            available = "\n  ".join(ids) or "(none loaded)"
-            raise LMStudioUnavailable(
-                f"Model '{self.model}' is not available in LM Studio.\n"
-                f"Models currently offered:\n  {available}\n"
-                "Download it in LM Studio, or change lmstudio.model in config.toml."
+        ids = [m.get("id") for m in data.get("data", []) if m.get("id")]
+        if self.model in ids:
+            return
+
+        # The exact id differs between platforms: the Mac runs an MLX build,
+        # Windows a GGUF one, and LM Studio names them differently. Rather than
+        # fail on a naming mismatch, accept an unambiguous near-match.
+        wanted = self.model.lower()
+        matches = [i for i in ids if i.lower() == wanted]
+        if not matches:
+            stem = wanted.split("/")[-1].replace("-mlx", "").replace("-gguf", "")
+            key = stem.split("-")[0] or stem            # e.g. "hunyuan"
+            matches = [i for i in ids if key and key in i.lower()]
+
+        if len(matches) == 1:
+            log.warning(
+                "model %r not found; using the one close match %r instead. "
+                "Set lmstudio.model to that id to silence this.",
+                self.model, matches[0],
             )
+            self.model = matches[0]
+            return
+
+        available = "\n  ".join(ids) or "(none loaded)"
+        hint = (f"\nSeveral models could match: {', '.join(matches)}.\n"
+                "Set lmstudio.model to exactly one of them."
+                if matches else
+                "\nDownload it in LM Studio, or change lmstudio.model in your config.")
+        raise LMStudioUnavailable(
+            f"Model '{self.model}' is not available in LM Studio.\n"
+            f"Models currently offered:\n  {available}{hint}"
+        )
 
     async def warmup(self) -> float:
         """Force LM Studio to actually load the model, before anyone speaks.

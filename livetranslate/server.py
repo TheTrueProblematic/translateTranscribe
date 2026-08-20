@@ -39,6 +39,9 @@ class DisplayServer:
         self._recent_lines: list[dict[str, Any]] = []
         self._last_english: dict[str, Any] | None = None
         self._last_backlog = -1
+        # Local subscribers get the same payloads as websocket clients. The
+        # Windows overlay uses this instead of opening a socket back to us.
+        self._sinks: list[Callable[[dict], None]] = []
 
         # Chrome runs the display in a persistent profile, so without this a
         # stale display.js/display.css survives across restarts and the page
@@ -111,7 +114,16 @@ class DisplayServer:
             self._recent_lines.append(payload)
         del self._recent_lines[:-2]
 
+    def add_sink(self, sink: Callable[[dict], None]) -> None:
+        """Receive every broadcast in-process. Must not block or raise."""
+        self._sinks.append(sink)
+
     async def broadcast(self, payload: dict) -> None:
+        for sink in self._sinks:
+            try:
+                sink(payload)
+            except Exception:
+                log.exception("display sink failed")
         kind = payload.get("type")
         if kind == "status":
             self._last_status = payload

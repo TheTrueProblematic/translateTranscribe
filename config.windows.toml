@@ -1,0 +1,113 @@
+# ============================================================================
+# LiveTranslate - Windows 11
+#
+# Layers on config.toml: thresholds, chunking, reading time, the translation
+# prompt and the vocabulary all come from there. Only what genuinely differs on
+# Windows lives in this file.
+#
+# Launch with LiveTranslate.bat (overlay) or LiveTranslateBrowser.bat.
+# ============================================================================
+
+extends = "config.toml"
+
+[lmstudio]
+# The Mac runs hunyuan-mt2-1.8b-mlx, which is an MLX build and Apple-only.
+# There is no GGUF of Hunyuan-MT2 1.8B, so Windows uses the 7B Hunyuan-MT
+# instead. In LM Studio, search for:
+#
+#     Hunyuan-MT-7B        (repository mradermacher/Hunyuan-MT-7B-GGUF)
+#
+# and download the Q4_K_M quantisation, about 4.6 GB. Q5_K_M (5.4 GB) is a
+# little better if there is room; on a machine without a GPU, Q3_K_M (3.8 GB)
+# is faster and still usable.
+#
+# If the id below does not match what LM Studio calls it, startup will say so
+# and list what it did find. A single unambiguous near-match is used
+# automatically, so "hunyuan-mt-7b" in any capitalisation will be picked up.
+model = "hunyuan-mt-7b"
+
+# LM Studio on another machine, e.g. a desktop with a GPU:
+#     base_url = "http://192.168.1.50:1234/v1"
+# or pass it at launch:  LiveTranslate.bat --lmstudio 192.168.1.50
+
+[asr]
+# MLX is Apple Silicon only, so the macOS recogniser cannot run here at all.
+# faster-whisper (CTranslate2) has Windows wheels and runs on CPU or CUDA.
+backend = "faster-whisper"
+
+# The rolling re-decode the macOS backend uses does not apply here: Whisper
+# pads every input to thirty seconds internally, so a decode costs about the
+# same for 1.5s of audio as for 8s (measured: 1490ms vs 1681ms). This backend
+# decodes once per utterance instead, cut on silence -- see [whisper] below.
+
+[whisper]
+# Latency here is dominated by the decode, and Whisper pads every input to
+# thirty seconds internally, so a decode costs the same whatever the utterance
+# length. Measured on this hardware, per utterance:
+#
+#   base    440 ms   English WER 0.045, Portuguese still clean
+#   small  1533 ms   English WER 0.023
+#   medium  slower still; worth it only with a CUDA GPU
+#
+# base is the default because a second of extra delay is felt by the room far
+# more than the difference between "fault" and "fold", which the translation
+# model usually absorbs anyway. Move to small if the transcript is visibly
+# wrong, especially once a GPU is available.
+model = "base"
+
+device = "auto"             # auto | cpu | cuda   (auto uses CUDA when present)
+compute_type = "auto"       # auto | int8 | float16 | float32
+beam_size = 1               # 1 is greedy and fastest; 5 is more accurate, slower
+download_root = "models/whisper"   # weights cached here on first run
+
+# Languages this session handles. Whisper identifies the language itself, and
+# anything outside this list is left unlabelled for the text-based router to
+# judge rather than trusted.
+languages = ["en", "pt"]
+
+# Utterance segmentation. Audio accumulates until the voice-activity detector
+# reports a pause this long, and that utterance is decoded once. Silence is
+# never decoded at all.
+utterance_silence_ms = 450
+# Backstop for a speaker who does not pause: decode anyway at this length so
+# words keep flowing during a run-on sentence. Longer means fewer decodes but
+# a longer wait before anything appears.
+max_utterance_s = 6.0
+# Shorter than this is a cough or a door closing, not speech worth decoding.
+min_utterance_s = 0.4
+
+# ============================================================================
+# The always-on-top subtitle window (LiveTranslate.bat)
+# ============================================================================
+[overlay]
+position = "bottom"         # bottom | top   (also toggled live with a hotkey)
+font = "Segoe UI"           # falls back automatically if it is not installed
+font_size = 34              # readable from a seat, without dominating the screen
+min_font_size = 22          # a long line shrinks to this before anything is cut
+opacity = 0.85              # whole-window alpha: white on black stays legible
+background = "#000000"
+foreground = "#FFFFFF"
+width_fraction = 0.82       # fraction of screen width the strip occupies
+margin_fraction = 0.06      # gap from the top or bottom edge
+pad_x = 28
+pad_y = 18
+
+# System-wide hotkeys: they work whichever application has focus, because the
+# overlay deliberately never takes focus itself.
+hotkey_toggle   = "ctrl+alt+s"   # show / hide the subtitles
+hotkey_position = "ctrl+alt+t"   # move between bottom and top
+hotkey_pause    = "ctrl+alt+p"   # stop and resume recognition
+
+# ============================================================================
+# Reading time, overridden for the overlay
+# ============================================================================
+[display]
+# The overlay's type is far smaller than the full-screen display's, so two
+# lines hold roughly a third more text and a whole sentence lands in one
+# screen. Combined with the recogniser here being slower per utterance, the
+# hold is shortened so the queue drains instead of compounding the delay.
+reading_cps      = 22.0
+dwell_lead_in_ms = 150
+min_dwell_ms     = 800
+max_dwell_ms     = 2400
+catchup_floor    = 0.50     # compress harder when it does fall behind
