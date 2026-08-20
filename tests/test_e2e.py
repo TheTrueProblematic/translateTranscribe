@@ -137,10 +137,23 @@ async def test_english_audio_produces_portuguese_and_reports_latency(cfg):
         f"even the fastest chunk took {min(ready):.0f}ms to be ready"
 
 
+def _english_only(cfg):
+    """The original single-language contract: [dual] disabled."""
+    import copy
+
+    from livetranslate.config import Config
+    data = copy.deepcopy(cfg._data)
+    data.setdefault("dual", {})["enabled"] = False
+    data.setdefault("asr", {})["model_path"] = "models/parakeet-tdt-0.6b-v2"
+    data["asr"]["model"] = "mlx-community/parakeet-tdt-0.6b-v2"
+    return Config(data, cfg.path)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fixture", ["pt_speaker1.wav", "pt_speaker2.wav"])
 async def test_portuguese_audio_never_reaches_the_display(cfg, fixture):
-    """Test 5: someone else answering in Portuguese must produce nothing."""
+    """Test 5, single-language mode: Portuguese must produce nothing at all."""
+    cfg = _english_only(cfg)
     audio = load_wav(AUDIO_DIR / fixture)
     async with OfflineRun(cfg) as run:
         await run.feed(silence(0.4))
@@ -175,3 +188,34 @@ async def test_manual_hold_blocks_everything(cfg):
     assert run.server.final_lines == [], \
         f"text was displayed while paused: {run.server.final_lines}"
     assert run.pipeline.gate.stats["paused"] > 0, "gate never saw a held chunk"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fixture", ["pt_speaker1.wav", "pt_speaker2.wav"])
+async def test_dual_mode_shows_room_portuguese_as_english(cfg, fixture):
+    """Test 5, two-way mode: the room's Portuguese is not discarded, it comes
+    back as English and is marked so the display can colour it differently."""
+    audio = load_wav(AUDIO_DIR / fixture)
+    async with OfflineRun(cfg) as run:
+        await run.feed(silence(0.4))
+        await run.feed(audio)
+        await run.feed(silence(2.0))
+        await run.settle(timeout=120)
+
+    shown = run.server.final_lines
+    assert shown, "room Portuguese produced nothing at all"
+    assert "pt2en" in run.server.directions, (
+        "Portuguese was not routed back to English; directions="
+        f"{set(run.server.directions)}"
+    )
+    # What comes back must be English, not passed-through Portuguese.
+    from livetranslate.langid import english_score
+    best = max(english_score(line) for line in shown)
+    assert best >= 0.45, f"output does not read as English: {shown}"
+    _write_report(f"test5_dual_{fixture}", {
+        "displayed": shown,
+        "directions": run.server.directions,
+        "gate_stats": dict(run.pipeline.gate.stats),
+    })
+    print(f"\n--- dual mode ({fixture}) ---")
+    print(json.dumps(shown, indent=2, ensure_ascii=False))

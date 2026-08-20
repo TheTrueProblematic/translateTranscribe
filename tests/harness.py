@@ -49,9 +49,11 @@ class CapturingServer:
         self.levels: list[float] = []
         self.english: list[tuple[str, str, str]] = []
         self.backlog: list[int] = []
+        self.directions: list[str] = []
 
-    async def send_line(self, seq, text, final):
+    async def send_line(self, seq, text, final, direction="en2pt"):
         self.lines.append((seq, text, final))
+        self.directions.append(direction)
 
     async def send_status(self, **kw):
         self.statuses.append(kw)

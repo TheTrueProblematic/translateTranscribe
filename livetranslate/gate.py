@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from .langid import english_score
+from .langid import detect_language, english_score
 
 log = logging.getLogger("livetranslate.gate")
 
@@ -30,6 +30,8 @@ class GateDecision:
     english: float = 0.0
     confidence: float = 0.0
     speaker: float | None = None
+    language: str = "en"        # "en" = the speaker, "pt" = someone in the room
+    portuguese: float = 0.0
 
     def __bool__(self) -> bool:
         return self.accepted
@@ -45,10 +47,25 @@ class Gate:
     """
 
     def __init__(self, cfg: Any, normalizer=None, speaker_verifier=None):
-        self.min_confidence = float(cfg.get("gate.min_confidence", 0.45))
+        # Two-way mode can afford a looser confidence floor: the language
+        # router decides what is Portuguese, so confidence only has to catch
+        # noise. With [dual] off, confidence is the ONLY thing standing between
+        # the room and the screen, so it stays strict.
+        self.dual_enabled = bool(cfg.get("dual.enabled", False))
+        self.min_confidence = float(
+            cfg.get("dual.min_confidence", 0.70) if self.dual_enabled
+            else cfg.get("gate.min_confidence", 0.85)
+        )
         self.min_english = float(cfg.get("gate.min_english_score", 0.45))
         self.min_words = int(cfg.get("gate.min_words", 2))
         self.log_rejections = bool(cfg.get("gate.log_rejections", True))
+
+        # Dual-language routing. Off: only English passes, everything else is
+        # dropped (the original behaviour). On: Portuguese is recognised as
+        # Portuguese and routed back into English instead of being thrown away.
+        self.dual = self.dual_enabled
+        self.pt_min = float(cfg.get("dual.portuguese_min", 0.30))
+        self.lang_margin = float(cfg.get("dual.margin", 0.10))
 
         self.speaker_enabled = bool(cfg.get("gate.speaker.enabled", False))
         self.speaker_threshold = float(cfg.get("gate.speaker.threshold", 0.72))
@@ -57,8 +74,8 @@ class Gate:
         self.normalizer = normalizer
         self.paused = bool(cfg.get("hotkey.start_paused", False))
 
-        self.stats = {"accepted": 0, "paused": 0, "short": 0,
-                      "confidence": 0, "language": 0, "speaker": 0}
+        self.stats = {"accepted": 0, "paused": 0, "short": 0, "confidence": 0,
+                      "language": 0, "speaker": 0, "accepted_pt": 0}
 
     # ---------------- tier 4: manual hold ----------------
 
@@ -100,10 +117,22 @@ class Gate:
                 scored = self.normalizer.normalize(stripped) or stripped
             except Exception:            # never let scoring break the pipeline
                 scored = stripped
-        eng = english_score(scored)
-        if eng < self.min_english:
-            self.stats["language"] += 1
-            return self._reject(text, "not_english", eng, confidence)
+        if self.dual:
+            lang, eng, pt = detect_language(
+                scored, english_min=self.min_english,
+                portuguese_min=self.pt_min, margin=self.lang_margin,
+            )
+            if lang is None:
+                self.stats["language"] += 1
+                d = self._reject(text, "no_language", eng, confidence)
+                d.portuguese = pt
+                return d
+        else:
+            lang, pt = "en", 0.0
+            eng = english_score(scored)
+            if eng < self.min_english:
+                self.stats["language"] += 1
+                return self._reject(text, "not_english", eng, confidence)
 
         sim = None
         if self.speaker_enabled and self.speaker_verifier is not None and audio is not None:
@@ -117,7 +146,10 @@ class Gate:
                 return self._reject(text, "wrong_speaker", eng, confidence, sim)
 
         self.stats["accepted"] += 1
-        return GateDecision(True, "ok", eng, confidence, sim)
+        if lang == "pt":
+            self.stats["accepted_pt"] += 1
+        return GateDecision(True, "ok", eng, confidence, sim,
+                            language=lang, portuguese=pt)
 
     def _reject(self, text, reason, eng, conf, sim=None) -> GateDecision:
         if self.log_rejections:

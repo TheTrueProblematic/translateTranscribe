@@ -6,6 +6,7 @@
   --bg: #050506;
   --fg: #F5F5F7;
   --prev-opacity: 0.4;
+  --from-pt: #6FB4FF;         /* room speech, translated back into English */
 
   /* Type scale. --scale is the user's live adjustment, persisted in
      localStorage and nudged with + / -. Sizes are viewport-relative so the
@@ -112,6 +113,11 @@ body.no-monitor .monitor { display: none; }
   opacity: var(--prev-opacity);
   color: var(--fg);
 }
+
+/* Lines that came FROM Portuguese, translated back to English for the speaker.
+   A different colour so nobody in the room mistakes someone else's question for
+   the translation of what the presenter just said. */
+.line.from-pt { color: var(--from-pt); }
 
 /* Top-aligned: the start of the sentence stays put while text streams in. */
 .cur {

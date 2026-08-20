@@ -163,5 +163,62 @@ def english_score(text: str) -> float:
     return max(0.0, min(1.0, score))
 
 
+def portuguese_score(text: str) -> float:
+    """0.0 = certainly not Portuguese, 1.0 = confidently Portuguese.
+
+    The mirror of english_score, used to ROUTE rather than to reject. With the
+    multilingual recogniser, Portuguese comes back as real Portuguese -- proper
+    words and diacritics -- so this is decisive rather than a guess.
+    """
+    tokens = [t for t in tokenize(text) if t]
+    n = len(tokens)
+    if n == 0:
+        return 0.0
+
+    mark_hits = sum(1 for t in tokens if t in _PT_MARK)
+    diacritics = sum(1 for t in tokens if any(ch in _PT_CHARS for ch in t))
+    morph = sum(
+        1 for t in tokens
+        if len(t) >= 5 and t not in _SUFFIX_EXEMPT and t.endswith(_PT_SUFFIXES)
+    )
+    digraphs = sum(
+        1 for t in tokens if len(t) >= 4 and any(d in t for d in _PT_DIGRAPHS)
+    )
+    stop_hits = sum(1 for t in tokens if t in _EN_STOP)
+
+    # Function words are the strongest cue; a diacritic is near-proof.
+    signal = (
+        min(1.0, (mark_hits / n) / 0.30) * 0.55
+        + min(1.0, (diacritics / n) / 0.15) * 0.30
+        + min(1.0, ((morph + digraphs) / n) / 0.20) * 0.15
+    )
+    # English function words argue against it.
+    signal -= 1.2 * (stop_hits / n)
+    return max(0.0, min(1.0, signal))
+
+
+def detect_language(
+    text: str,
+    *,
+    english_min: float = 0.45,
+    portuguese_min: float = 0.30,
+    margin: float = 0.10,
+) -> tuple[str | None, float, float]:
+    """Route a line by language: returns ("en" | "pt" | None, en_score, pt_score).
+
+    None means neither language is clearly present -- noise, or a fragment too
+    short to judge. Those are dropped rather than guessed at, because showing
+    the audience a confidently mistranslated fragment is worse than showing
+    nothing.
+    """
+    en = english_score(text)
+    pt = portuguese_score(text)
+    if pt >= portuguese_min and pt >= en + margin:
+        return "pt", en, pt
+    if en >= english_min and en >= pt:
+        return "en", en, pt
+    return None, en, pt
+
+
 def looks_english(text: str, threshold: float) -> bool:
     return english_score(text) >= threshold

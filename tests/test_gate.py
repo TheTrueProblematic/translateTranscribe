@@ -47,9 +47,34 @@ NOT_ENGLISH = [
 ]
 
 
+def _cfg_with(cfg, **overrides):
+    """A shallow copy of the real config with a few keys overridden."""
+    import copy
+    from livetranslate.config import Config
+    data = copy.deepcopy(cfg._data)
+    for dotted, value in overrides.items():
+        node = data
+        parts = dotted.split(".")
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = value
+    return Config(data, cfg.path)
+
+
 @pytest.fixture(scope="module")
 def gate(cfg):
-    return Gate(cfg, normalizer=Normalizer(cfg))
+    """English-only routing: Portuguese is rejected outright.
+
+    This is what runs when [dual] is disabled, and it is still the behaviour
+    the confidence and coherence thresholds are tuned against.
+    """
+    return Gate(_cfg_with(cfg, **{"dual.enabled": False}), normalizer=Normalizer(cfg))
+
+
+@pytest.fixture(scope="module")
+def dual_gate(cfg):
+    """Two-way routing: Portuguese is recognised and sent back as English."""
+    return Gate(_cfg_with(cfg, **{"dual.enabled": True}), normalizer=Normalizer(cfg))
 
 
 @pytest.mark.parametrize("text", ENGLISH)
@@ -160,12 +185,32 @@ HIGHEST_PORTUGUESE_CONFIDENCE = 0.823   # highest that language ID cannot catch
 
 
 def test_confidence_threshold_sits_above_english_looking_portuguese(cfg):
-    """The other side of the window: Portuguese that decodes into plausible
-    English is only stopped by confidence."""
+    """Single-language mode only. There, Portuguese that decodes into plausible
+    English is stopped by confidence and nothing else, so the floor must sit
+    above it. (Two-way mode routes such lines by language instead, and uses the
+    looser dual.min_confidence.)"""
     assert cfg.get("gate.min_confidence") > HIGHEST_PORTUGUESE_CONFIDENCE, (
-        f"min_confidence {cfg.get('gate.min_confidence')} would let "
-        f"English-looking Portuguese through"
+        f"gate.min_confidence {cfg.get('gate.min_confidence')} would let "
+        f"English-looking Portuguese through when [dual] is disabled"
     )
+
+
+def test_dual_mode_uses_the_looser_floor(cfg):
+    dual = Gate(_cfg_with(cfg, **{"dual.enabled": True}), normalizer=Normalizer(cfg))
+    single = Gate(_cfg_with(cfg, **{"dual.enabled": False}), normalizer=Normalizer(cfg))
+    assert dual.min_confidence == cfg.get("dual.min_confidence")
+    assert single.min_confidence == cfg.get("gate.min_confidence")
+    assert dual.min_confidence < single.min_confidence
+
+
+def test_dual_mode_keeps_quieter_real_speech(cfg):
+    """The 447 dropped lines: ordinary English at 0.75-0.85 must now survive."""
+    dual = Gate(_cfg_with(cfg, **{"dual.enabled": True}), normalizer=Normalizer(cfg))
+    for text, conf in [("different things, you can use the same thing.", 0.766),
+                       ("that information is important that they", 0.848),
+                       ("it is not a good idea you can not do that", 0.782)]:
+        d = dual.evaluate(text, confidence=conf)
+        assert d.accepted, f"still dropped at {conf}: {d.reason}"
 
 
 def test_confidence_threshold_sits_below_real_speech(cfg):
@@ -193,4 +238,54 @@ def test_mangled_portuguese_is_still_rejected(gate):
          "firmware. The problem is", 0.823),
     ]:
         d = gate.evaluate(text, confidence=conf)
+        assert not d.accepted, f"Portuguese reached the display: {text!r}"
+
+
+
+# ---------------- dual-language routing ----------------
+
+# Real multilingual-recogniser output: Portuguese comes back AS Portuguese.
+ROOM_PORTUGUESE = [
+    "Não o toque nesse conector, ele ainda está energizado.",
+    "Eu vou verificar a versão do firmware agora mesmo.",
+    "O problema está no lado esquerdo da fuselagem, perto do suporte.",
+    "Professor, eu tenho uma pergunta sobre o sistema de navegação.",
+    "Quando você vai mostrar a calibração do gimbal?",
+    "A gente pode fazer o teste depois do intervalo, tudo bem?",
+]
+
+
+@pytest.mark.parametrize("text", ROOM_PORTUGUESE)
+def test_dual_mode_routes_portuguese_back_to_english(dual_gate, text):
+    d = dual_gate.evaluate(text, confidence=0.95)
+    assert d.accepted, f"room Portuguese was dropped: {d.reason}"
+    assert d.language == "pt", f"routed as {d.language}, scores en={d.english:.2f} pt={d.portuguese:.2f}"
+
+
+@pytest.mark.parametrize("text", ENGLISH)
+def test_dual_mode_still_routes_the_speaker_as_english(dual_gate, text):
+    d = dual_gate.evaluate(text, confidence=SPEAKER_CONF)
+    assert d.accepted and d.language == "en", (
+        f"the speaker's own English was routed as {d.language}"
+    )
+
+
+@pytest.mark.parametrize("text", REAL_SESSION_SPEECH)
+def test_dual_mode_does_not_misroute_real_session_speech(dual_gate, text):
+    """Every line here is Max talking; none may turn up in blue."""
+    body, conf = text
+    d = dual_gate.evaluate(body, confidence=conf)
+    assert d.accepted and d.language == "en", f"misrouted as {d.language}: {body!r}"
+
+
+def test_dual_mode_drops_what_is_neither_language(dual_gate):
+    """Noise must not be forced into one language or the other."""
+    d = dual_gate.evaluate("kwan doo voh say kee zher", confidence=0.95)
+    assert not d.accepted and d.reason == "no_language"
+
+
+def test_english_only_mode_still_rejects_portuguese(gate):
+    """With [dual] off, the original contract holds."""
+    for text in ROOM_PORTUGUESE:
+        d = gate.evaluate(text, confidence=0.95)
         assert not d.accepted, f"Portuguese reached the display: {text!r}"

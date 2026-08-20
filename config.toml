@@ -20,14 +20,17 @@ timeout_s = 20.0                    # Hard ceiling on one translation request.
 context_lines = 2                   # Previous translated lines passed for pronoun/gender agreement.
 
 [asr]
-# English-ONLY model, deliberately. This is tier 1 of the speaker gate: the
-# multilingual v3 transcribes Portuguese as clean Portuguese, or as confident
-# English-looking word salad that passes the coherence gate. See docs/REPORT.md.
-model = "mlx-community/parakeet-tdt-0.6b-v2"
+# MULTILINGUAL model (v3). With [dual] below, Portuguese spoken in the room is
+# recognised AS Portuguese and translated back into English, instead of being
+# mangled into plausible-sounding English that the gate then has to guess about.
+# Measured: English accuracy matches the English-only v2, and Portuguese scores
+# 0.00 on the English check instead of v2's ambiguous 0.30. See docs/REPORT.md.
+# If you set [dual] enabled = false, prefer parakeet-tdt-0.6b-v2 instead.
+model = "mlx-community/parakeet-tdt-0.6b-v3"
 # Optional local weights directory (config.json + model.safetensors). If it
 # exists it is used instead of downloading from Hugging Face, which makes
 # startup offline and instant. Relative paths resolve from the project root.
-model_path = "models/parakeet-tdt-0.6b-v2"
+model_path = "models/parakeet-tdt-0.6b-v3"
 sample_rate = 16000
 
 # Recognition runs as a rolling re-decode of a short window rather than through
@@ -65,24 +68,11 @@ hangover_ms = 200           # Speech must be absent this long before silence is 
 [gate]
 # Tier 2 of the "reject other people's speech" stack (spec section 5).
 # tune in the room ---------------------------------------------------------
-# Mean ASR confidence below this => drop. An English-only model is far less
-# certain about speech it was never trained on, which makes this the most
-# useful automatic filter against other people's Portuguese.
-#
-# Measured on this machine, from real sessions and from pt_BR fixtures:
-#     you, into the built-in mic     0.921 - 0.998
-#     Portuguese in the room         0.765 - 0.927
-# They overlap, so confidence alone cannot separate them -- the English-ness
-# check handles the clearly-Portuguese cases (which score ~0.00) and this
-# handles Portuguese that comes back looking like English ("in physiology, but
-# support."). Together, on that measured corpus: nothing of yours dropped,
-# nothing of theirs shown.
-#
-# 0.85 sits between the worst leak (0.823) and your quietest utterance (0.921).
-# Tuning is meant to be quick: every dropped chunk appears on the English strip
-# at the bottom of the display with its reason and scores, e.g.
-#     dropped (low_confidence, conf 0.74, en 0.61)
-# and every run's transcript records them too. Tune from that, not from guesses.
+# Mean ASR confidence below this => drop, when [dual] is DISABLED. In that mode
+# confidence is the only thing separating the room's Portuguese from the
+# speaker's English, so it stays strict. Measured: the speaker 0.921-0.998,
+# English-looking Portuguese up to 0.823; 0.85 sits between them.
+# See dual.min_confidence for the two-way mode, which can afford to be looser.
 min_confidence = 0.85
 min_english_score = 0.45       # English-ness 0..1 below this => drop. Measured: real English 0.57-0.94, garbled pt_BR 0.00-0.18.
 min_words = 2               # Drop 1-word fragments; they are usually noise, not speech.
@@ -132,6 +122,23 @@ max_lines = 2               # Current line + previous line, per spec.
 prev_opacity = 0.4          # Dimming of the previous line.
 background = "#050506"
 foreground = "#F5F5F7"
+
+[dual]
+# Two-way mode. The room is bilingual, so the recogniser is too.
+#   English  -> Portuguese, shown in white, as always.
+#   Portuguese -> English, shown in blue, so the speaker can read the reply and
+#                 nobody mistakes it for a translation of their own words.
+# Anything that is clearly neither language is dropped rather than guessed at.
+enabled = true
+portuguese_min = 0.30       # Portuguese-ness needed to route a line as Portuguese
+margin = 0.10               # how far Portuguese must beat English to win the toss
+
+# Confidence floor used INSTEAD of gate.min_confidence while dual mode is on.
+# It can be much looser here, because deciding what is Portuguese is now the
+# router's job rather than something inferred from how unsure the recogniser
+# sounded. In a real session 447 lines were dropped at 0.85 and most were
+# ordinary English; this should get them back.
+min_confidence = 0.70
 
 [transcript]
 # Every run writes both languages to logs/transcripts/, so a session can be

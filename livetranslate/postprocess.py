@@ -21,7 +21,8 @@ _TERMINAL = ".!?…\"')]"
 
 # Leaked scaffolding the model occasionally prepends.
 _PREFIX_RE = re.compile(
-    r"^\s*(?:portuguese|português|portugues|translation|tradução)\s*[:\-]\s*",
+    r"^\s*(?:portuguese|português|portugues|english|inglês|ingles|"
+    r"translation|tradução)\s*[:\-]\s*",
     re.IGNORECASE,
 )
 
@@ -95,11 +96,19 @@ def capitalize_and_punctuate(text: str) -> str:
     return out
 
 
-def postprocess(text: str, source_text: str = "", fix_enclitics: bool = True) -> str:
-    """Full cleanup of one translated line. Safe on empty input."""
+def postprocess(text: str, source_text: str = "", fix_enclitics: bool = True,
+                target: str = "pt") -> str:
+    """Full cleanup of one translated line. Safe on empty input.
+
+    target="en" skips the Portuguese-specific repairs (enclisis, feminine
+    agreement); capitalization and terminal punctuation still apply, because
+    the model mirrors the unpunctuated recogniser input in either direction.
+    """
     out = strip_scaffolding(text)
     if not out:
         return ""
+    if target != "pt":
+        return capitalize_and_punctuate(out)
 
     if _FEMININE_RE.search(out):
         log.warning(

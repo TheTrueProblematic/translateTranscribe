@@ -94,8 +94,19 @@ The status dot: **green** listening, **amber** held, **blue** translating,
 **red** disconnected. The bar beside it is the mic level. There is deliberately
 no English text on the display — the audience sees Portuguese only.
 
-**When someone else speaks Portuguese, hit the hold key.** The automatic gate
-catches most of it, but the hold is the guarantee.
+**Two-way mode.** The recogniser is multilingual, so the room is handled
+properly rather than guessed at:
+
+- You speak **English** → Portuguese on screen, in white, as always.
+- Someone answers in **Portuguese** → English on screen, **in blue**, so you
+  can read the reply and nobody mistakes it for a translation of your own words.
+- Anything that is clearly neither language is dropped rather than guessed at.
+
+Set `dual.enabled = false` in `config.toml` for the old behaviour (English only,
+everything else discarded); if you do, switch `asr.model` back to
+`parakeet-tdt-0.6b-v2`.
+
+The hold key is still there when you want the screen to stop entirely.
 
 ## Configuration
 

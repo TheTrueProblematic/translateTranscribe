@@ -21,7 +21,7 @@ from typing import AsyncIterator
 import aiohttp
 
 from .postprocess import capitalize_and_punctuate, postprocess, strip_scaffolding
-from .prompt import build_system_prompt
+from .prompt import build_pt_en_prompt, build_system_prompt
 
 log = logging.getLogger("livetranslate.translator")
 
@@ -42,12 +42,20 @@ class Translator:
         self.context_lines = int(cfg.get("lmstudio.context_lines", 2))
 
         # Built once: may carry a session vocabulary from the config.
+        # Two directions, each with its own prompt and its own context. Keeping
+        # the contexts apart matters: the speaker's Portuguese output must not
+        # become "prior turns" for translating someone else's Portuguese back
+        # into English, or the model starts answering the wrong conversation.
         self.system_prompt = build_system_prompt(cfg)
+        self.pt_en_prompt = build_pt_en_prompt(cfg)
 
         self._session: aiohttp.ClientSession | None = None
         self._lock = asyncio.Lock()          # one in-flight request, per spec
         # (english, portuguese) pairs, replayed as real chat turns.
-        self._context: deque[tuple[str, str]] = deque(maxlen=max(0, self.context_lines))
+        self._contexts: dict[str, deque] = {
+            "en2pt": deque(maxlen=max(0, self.context_lines)),
+            "pt2en": deque(maxlen=max(0, self.context_lines)),
+        }
 
     # ---------------- lifecycle ----------------
 
@@ -123,7 +131,11 @@ class Translator:
 
     # ---------------- prompting ----------------
 
-    def _build_messages(self, text: str) -> list[dict]:
+    @staticmethod
+    def _labels(direction: str) -> tuple[str, str]:
+        return ("English", "Portuguese") if direction == "en2pt" else ("Portuguese", "English")
+
+    def _build_messages(self, text: str, direction: str = "en2pt") -> list[dict]:
         """System prompt, prior turns, then the line to translate.
 
         Context is replayed as genuine user/assistant turns rather than pasted
@@ -133,14 +145,16 @@ class Translator:
         twice and the line grew until the type shrank. As real turns it has
         nothing to copy: the earlier translations are already its own replies.
         """
-        messages = [{"role": "system", "content": self.system_prompt}]
-        for prior_en, prior_pt in self._context:
-            messages.append({"role": "user", "content": f"English: {prior_en}\nPortuguese:"})
-            messages.append({"role": "assistant", "content": prior_pt})
-        messages.append({"role": "user", "content": f"English: {text}\nPortuguese:"})
+        prompt = self.system_prompt if direction == "en2pt" else self.pt_en_prompt
+        src, dst = self._labels(direction)
+        messages = [{"role": "system", "content": prompt}]
+        for prior_src, prior_dst in self._contexts[direction]:
+            messages.append({"role": "user", "content": f"{src}: {prior_src}\n{dst}:"})
+            messages.append({"role": "assistant", "content": prior_dst})
+        messages.append({"role": "user", "content": f"{src}: {text}\n{dst}:"})
         return messages
 
-    def _payload(self, text: str, stream: bool) -> dict:
+    def _payload(self, text: str, stream: bool, direction: str = "en2pt") -> dict:
         return {
             "model": self.model,
             "temperature": self.temperature,
@@ -148,29 +162,33 @@ class Translator:
             "seed": self.seed,
             "max_tokens": self.max_tokens,
             "stream": stream,
-            "messages": self._build_messages(text),
+            "messages": self._build_messages(text, direction),
         }
 
-    def remember(self, english: str, portuguese: str) -> None:
-        if portuguese and self.context_lines > 0:
-            self._context.append((english, portuguese))
+    def remember(self, source: str, translated: str, direction: str = "en2pt") -> None:
+        if translated and self.context_lines > 0:
+            self._contexts[direction].append((source, translated))
 
     def reset_context(self) -> None:
-        self._context.clear()
+        for ctx in self._contexts.values():
+            ctx.clear()
 
     # ---------------- translation ----------------
 
-    async def translate_stream(self, text: str) -> AsyncIterator[tuple[str, bool]]:
+    async def translate_stream(
+        self, text: str, direction: str = "en2pt"
+    ) -> AsyncIterator[tuple[str, bool]]:
         """Yield (cumulative_line, is_final). Holds the single-flight lock."""
         await self.start()
         assert self._session is not None
 
+        target = "pt" if direction == "en2pt" else "en"
         async with self._lock:
             raw = ""
             try:
                 async with self._session.post(
                     f"{self.base_url}/chat/completions",
-                    json=self._payload(text, stream=True),
+                    json=self._payload(text, stream=True, direction=direction),
                     headers={"Content-Type": "application/json"},
                 ) as resp:
                     if resp.status != 200:
@@ -202,19 +220,19 @@ class Translator:
                             yield (partial[0].upper() + partial[1:], False)
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                 log.error("translation failed for %r: %s", text, exc)
-                final_err = postprocess(raw, text) if raw else ""
+                final_err = postprocess(raw, text, target=target) if raw else ""
                 yield (final_err, True)
                 return
 
-            final = postprocess(raw, text)
+            final = postprocess(raw, text, target=target)
             if final:
-                final = self._strip_echoed_context(final)
-                self.remember(text, final)
+                final = self._strip_echoed_context(final, direction)
+                self.remember(text, final, direction)
             yield (final, True)
 
-    def _strip_echoed_context(self, line: str) -> str:
+    def _strip_echoed_context(self, line: str, direction: str = "en2pt") -> str:
         """Safety net: drop a previous translation the model prepended anyway."""
-        for _prior_en, prior_pt in self._context:
+        for _prior_src, prior_pt in self._contexts[direction]:
             if prior_pt and line.startswith(prior_pt):
                 trimmed = line[len(prior_pt):].strip()
                 if trimmed:
@@ -222,10 +240,10 @@ class Translator:
                     return trimmed
         return line
 
-    async def translate(self, text: str) -> str:
+    async def translate(self, text: str, direction: str = "en2pt") -> str:
         """Non-streaming convenience wrapper, used by tests."""
         final = ""
-        async for line, is_final in self.translate_stream(text):
+        async for line, is_final in self.translate_stream(text, direction):
             if is_final:
                 final = line
         return final

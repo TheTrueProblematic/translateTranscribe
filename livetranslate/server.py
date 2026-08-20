@@ -129,8 +129,10 @@ class DisplayServer:
             return_exceptions=True,
         )
 
-    async def send_line(self, seq: int, text: str, final: bool) -> None:
-        await self.broadcast({"type": "line", "seq": seq, "text": text, "final": final})
+    async def send_line(self, seq: int, text: str, final: bool,
+                        direction: str = "en2pt") -> None:
+        await self.broadcast({"type": "line", "seq": seq, "text": text,
+                              "final": final, "direction": direction})
 
     async def send_status(self, *, paused: bool, translating: bool, listening: bool) -> None:
         await self.broadcast({

@@ -26,8 +26,42 @@ Portuguese: Fiquei surpreso, achei que já tinha terminado.
 English: Don't touch that connector, it's still live.
 Portuguese: Não toque nesse conector, ele ainda está energizado."""
 
+# Reverse direction: someone in the room answers in Portuguese and the speaker
+# needs to know what was said. Shown in a different colour on the display, so
+# nobody mistakes it for the translation of the speaker's own words.
+_PT_EN_RULES = """You translate live speech from Brazilian Portuguese into English for an on-screen display.
+Rules:
+- Output natural, plain English. Keep it short and direct.
+- Keep technical terms that engineers use in English: gimbal, firmware, IMU, hardware, software, setup, laptop.
+- "energizado" applied to a circuit, connector, wire or panel means live or energized.
+- The input comes from imperfect speech recognition. Infer what the speaker meant and translate that. Never comment on the input.
+- Output ONLY the English translation. No quotes, no notes, no Portuguese, no explanation.
+"""
+
+_PT_EN_EXAMPLES = """Examples:
+Portuguese: Não toque nesse conector, ele ainda está energizado.
+English: Don't touch that connector, it's still live.
+Portuguese: Professor, eu tenho uma pergunta sobre o sistema de navegação.
+English: Professor, I have a question about the navigation system.
+Portuguese: A gente pode fazer o teste depois do intervalo, tudo bem?
+English: Can we do the test after the break, is that okay?"""
+
+PT_EN_SYSTEM_PROMPT = _PT_EN_RULES + "\n" + _PT_EN_EXAMPLES
+
+
 # The default prompt, unchanged: rules then examples.
 SYSTEM_PROMPT = _RULES + "\n" + _EXAMPLES
+
+
+def build_pt_en_prompt(cfg=None) -> str:
+    """Portuguese -> English. Session vocabulary applies in this direction too:
+    the terms are the same, only the direction of travel changes."""
+    extra = ""
+    if cfg is not None:
+        extra = (cfg.get("prompt.extra_rules", "") or "").strip()
+    if not extra:
+        return PT_EN_SYSTEM_PROMPT
+    return f"{_PT_EN_RULES}\n{extra}\n\n{_PT_EN_EXAMPLES}"
 
 
 def build_system_prompt(cfg=None) -> str:

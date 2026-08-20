@@ -64,15 +64,20 @@
   let renderedSeq = 0;   // highest sequence number shown
   let curSeq = 0;
 
-  function setLine(seq, text, final) {
+  function setLine(seq, text, final, direction) {
     if (seq < curSeq) return;            // stale response: never scramble
     if (seq > curSeq) {
       // A new line begins: promote current to previous. The previous band has
       // a fixed height, so this does not move the current line at all.
-      if (el.cur.textContent) el.prev.textContent = el.cur.textContent;
+      if (el.cur.textContent) {
+        el.prev.textContent = el.cur.textContent;
+        el.prev.classList.toggle("from-pt", el.cur.classList.contains("from-pt"));
+      }
       curSeq = seq;
       resetFit();
     }
+    // Blue when the line came from Portuguese spoken in the room.
+    el.cur.classList.toggle("from-pt", direction === "pt2en");
     el.cur.textContent = text;
     refit();
     if (final) renderedSeq = Math.max(renderedSeq, seq);
@@ -98,7 +103,7 @@
       try { m = JSON.parse(ev.data); } catch (e) { return; }
       switch (m.type) {
         case "line":
-          setLine(m.seq | 0, m.text || "", !!m.final);
+          setLine(m.seq | 0, m.text || "", !!m.final, m.direction);
           break;
         case "settings":
           document.body.classList.toggle("no-monitor", !m.show_english_monitor);

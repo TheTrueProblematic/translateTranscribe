@@ -32,7 +32,7 @@ class RecordingServer:
         self.shown: list[tuple[float, int, str]] = []
         self.backlog: list[int] = []
 
-    async def send_line(self, seq, text, final):
+    async def send_line(self, seq, text, final, direction="en2pt"):
         if final:
             self.shown.append((time.perf_counter(), seq, text))
 
@@ -58,7 +58,7 @@ class InstantTranslator:
     async def close(self):
         pass
 
-    async def translate_stream(self, text):
+    async def translate_stream(self, text, direction="en2pt"):
         await asyncio.sleep(0.02)
         yield (f"Linha {text[:24]}.", True)
 

@@ -80,6 +80,7 @@ class TranscriptWriter:
         audio_end: float | None = None,
         chunk_reason: str = "",
         raw_english: str = "",
+        direction: str = "en2pt",
     ) -> None:
         if not self.enabled or self._txt is None:
             return
@@ -97,6 +98,7 @@ class TranscriptWriter:
             "confidence": round(confidence, 4),
             "english_score": round(english_score, 4),
             "chunk_reason": chunk_reason,
+            "direction": direction,
             "config": self.mode,
         }
         if raw_english and raw_english != english:
@@ -109,8 +111,12 @@ class TranscriptWriter:
 
         try:
             if accepted:
+                # Label by direction: PT>EN lines are someone else in the room,
+                # translated back for the speaker.
+                src, dst = (("PT", "EN") if direction == "pt2en" else ("EN", "PT"))
                 self._txt.write(
-                    f"[{stamp}] #{seq}\n  EN  {english}\n  PT  {portuguese}\n\n"
+                    f"[{stamp}] #{seq}{'  (room -> EN)' if direction == 'pt2en' else ''}\n"
+                    f"  {src}  {english}\n  {dst}  {portuguese}\n\n"
                 )
             else:
                 self._txt.write(

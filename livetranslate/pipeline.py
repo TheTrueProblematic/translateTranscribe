@@ -267,10 +267,12 @@ class Pipeline:
             return
         self.stats["accepted"] += 1
 
+        direction = "pt2en" if decision.language == "pt" else "en2pt"
         log.info(
-            "EN  [%d] (%s, %d words, conf %.3f, en %.3f) %r",
+            "%s [%d] (%s, %d words, conf %.3f, en %.3f, pt %.3f) %r",
+            "PT>" if direction == "pt2en" else "EN ",
             chunk.seq, chunk.reason, chunk.word_count,
-            decision.confidence, decision.english, normalized,
+            decision.confidence, decision.english, decision.portuguese, normalized,
         )
 
         self._translating = True
@@ -287,7 +289,9 @@ class Pipeline:
                 # show it whole. Streaming it would be pointless: by the time
                 # it is allowed on screen it is already complete.
                 final = ""
-                async for text, is_final in self.translator.translate_stream(normalized):
+                async for text, is_final in self.translator.translate_stream(
+                    normalized, direction
+                ):
                     if is_final:
                         final = text
                 if not final:
@@ -301,14 +305,16 @@ class Pipeline:
                 self.first_char_latencies.append(dt)
                 timing_log.info("first_char_ms=%.1f seq=%d (held)", dt, chunk.seq)
                 for r in self.buffer.submit(chunk.seq, final, True):
-                    await self.server.send_line(r.seq, r.text, r.final)
-                await self._finish_line(chunk, normalized, final, decision, t0)
+                    await self.server.send_line(r.seq, r.text, r.final, direction)
+                await self._finish_line(chunk, normalized, final, decision, t0, direction)
                 return
 
             # Nothing waiting: stream it in as it generates, as usual.
             first_char_seen = False
             final = ""
-            async for text, is_final in self.translator.translate_stream(normalized):
+            async for text, is_final in self.translator.translate_stream(
+                normalized, direction
+            ):
                 if not text and is_final:
                     await self._fail_chunk(chunk, normalized)
                     return
@@ -319,11 +325,11 @@ class Pipeline:
                     self.ready_latencies.append(dt)   # shown as soon as ready
                     timing_log.info("first_char_ms=%.1f seq=%d", dt, chunk.seq)
                 for r in self.buffer.submit(chunk.seq, text, is_final):
-                    await self.server.send_line(r.seq, r.text, r.final)
+                    await self.server.send_line(r.seq, r.text, r.final, direction)
                 if is_final:
                     final = text
             if final:
-                await self._finish_line(chunk, normalized, final, decision, t0)
+                await self._finish_line(chunk, normalized, final, decision, t0, direction)
         finally:
             self._translating = False
             await self.publish_status()
@@ -340,14 +346,15 @@ class Pipeline:
         await self._publish_english(note="translation returned nothing")
 
     async def _finish_line(self, chunk: Chunk, normalized: str, text: str,
-                           decision, t0: float) -> None:
+                           decision, t0: float, direction: str = "en2pt") -> None:
         """Record a displayed line and reserve its reading time."""
         total = (time.perf_counter() - t0) * 1000.0
         self.total_latencies.append(total)
         self.stats["translated"] += 1
         timing_log.info("total_ms=%.1f seq=%d", total, chunk.seq)
         dwell = self._dwell_ms(text)
-        log.info("PT  [%d] (%.0fms, hold %.1fs, backlog %d) %r",
+        log.info("%s [%d] (%.0fms, hold %.1fs, backlog %d) %r",
+                 "=EN" if direction == "pt2en" else "=PT",
                  chunk.seq, total, dwell / 1000.0, self.backlog, text)
         self._hold_display(text)
         self.transcript.write(
@@ -356,5 +363,5 @@ class Pipeline:
             confidence=decision.confidence,
             english_score=decision.english, latency_ms=total,
             audio_start=chunk.start, audio_end=chunk.end,
-            chunk_reason=chunk.reason,
+            chunk_reason=chunk.reason, direction=direction,
         )

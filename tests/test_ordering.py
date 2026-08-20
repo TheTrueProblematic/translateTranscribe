@@ -75,7 +75,7 @@ class FakeServer:
     def __init__(self):
         self.lines = []
 
-    async def send_line(self, seq, text, final):
+    async def send_line(self, seq, text, final, direction="en2pt"):
         self.lines.append((seq, text, final))
 
     async def send_status(self, **kw):
@@ -105,7 +105,7 @@ class DelayedTranslator:
     async def close(self):
         pass
 
-    async def translate_stream(self, text):
+    async def translate_stream(self, text, direction="en2pt"):
         idx = self.calls
         self.calls += 1
         await asyncio.sleep(self.delays[idx % len(self.delays)])
