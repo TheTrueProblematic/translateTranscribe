@@ -17,6 +17,10 @@ Never more than two lines are shown. Text is wrapped to the window width, and
 if it still will not fit the font steps down through a small range; only if it
 still overflows is the beginning dropped. That order matters -- shrinking is
 less disruptive to read than losing words.
+
+Staying on top is not one flag. `-topmost` alone holds over windowed
+applications and loses to anything running full screen, so on Windows the
+window is restyled and re-raised on a timer -- see `topmost_win`.
 """
 from __future__ import annotations
 
@@ -25,6 +29,8 @@ import queue
 import sys
 import tkinter as tk
 import tkinter.font as tkfont
+
+from . import topmost_win
 
 log = logging.getLogger("livetranslate.overlay")
 
@@ -51,11 +57,18 @@ class SubtitleOverlay:
         self.background = cfg.get("overlay.background", "#000000")
         self.foreground = cfg.get("overlay.foreground", COLOUR_DEFAULT)
         self.max_lines = 2                    # deliberately not configurable
+        self.topmost_interval_ms = int(cfg.get("overlay.topmost_interval_ms", 250))
+        self.click_through = bool(cfg.get("overlay.click_through", True))
 
         self.visible = True
         self._text = ""
         self._direction = "en2pt"
         self._closing = False
+        self._hwnd: int | None = None         # Tk can replace it; see _keep_on_top
+        self._topmost_ticks = 0
+        self._warned_exclusive = False
+        # Ticks between asking the shell what is in front, about five seconds.
+        self._state_every = max(1, 5000 // max(1, self.topmost_interval_ms))
 
         self.root = tk.Tk()
         self.root.title("LiveTranslate")
@@ -86,6 +99,12 @@ class SubtitleOverlay:
         self._bind_local_keys()
         self._layout()
         self.root.after(50, self._drain)
+        if topmost_win.IS_WINDOWS:
+            # The wrapper window has to exist before it can be styled.
+            self.root.update_idletasks()
+        self._keep_on_top(restyle=True)
+        if self.topmost_interval_ms > 0:
+            self.root.after(self.topmost_interval_ms, self._topmost_tick)
 
     # ---------------- geometry ----------------
 
@@ -125,10 +144,58 @@ class SubtitleOverlay:
         if self.visible:
             self.root.deiconify()
             self.root.attributes("-topmost", True)
+            # Showing the window again can hand Tk a new wrapper handle, so
+            # restyle rather than assume the old one is still ours.
+            self._keep_on_top(restyle=True)
         else:
             self.root.withdraw()
         log.info("overlay %s", "shown" if self.visible else "hidden")
         return self.visible
+
+    # ---------------- staying on top ----------------
+
+    def _keep_on_top(self, restyle: bool = False) -> None:
+        """Push the strip back to the front of the topmost band.
+
+        Needed repeatedly, not once: Windows raises a foreground full-screen
+        application above the topmost band, so a window that asserted its
+        position only at startup ends up behind it. No-op off Windows, where
+        `-topmost` is the whole story. See `topmost_win`.
+        """
+        if self._closing or not self.visible or not topmost_win.IS_WINDOWS:
+            return
+        hwnd = topmost_win.window_handle(self.root)
+        if not hwnd:
+            return
+        if restyle or hwnd != self._hwnd:
+            topmost_win.harden(hwnd, click_through=self.click_through)
+            self._hwnd = hwnd
+        topmost_win.raise_to_top(hwnd)
+
+    def _topmost_tick(self) -> None:
+        if self._closing:
+            return
+        self._keep_on_top()
+        self._topmost_ticks += 1
+        # Asking the shell what is in front is not free and the answer does not
+        # change quickly, so it is asked on its own slower cadence.
+        if topmost_win.IS_WINDOWS and self._topmost_ticks % self._state_every == 0:
+            self._report_exclusive_fullscreen()
+        self.root.after(self.topmost_interval_ms, self._topmost_tick)
+
+    def _report_exclusive_fullscreen(self) -> None:
+        """Log the one case no overlay can win, so it is not mistaken for a bug."""
+        exclusive = topmost_win.exclusive_fullscreen()
+        if exclusive and not self._warned_exclusive:
+            log.warning(
+                "a full-screen exclusive Direct3D application is in front. It "
+                "bypasses the desktop compositor, so no other process can draw "
+                "over it and the subtitles will stay hidden until it is run in "
+                "borderless or windowed full screen."
+            )
+        elif self._warned_exclusive and not exclusive:
+            log.info("full-screen exclusive application gone; subtitles visible again")
+        self._warned_exclusive = exclusive
 
     # ---------------- text fitting ----------------
 
@@ -233,6 +300,11 @@ class SubtitleOverlay:
         The global hotkeys registered with Windows are the ones that matter in
         use, since this window never takes focus; these are a fallback and make
         the overlay testable on any platform.
+
+        On Windows with `overlay.click_through` left on, the window cannot be
+        clicked or focused at all, so these never fire there. That is the right
+        trade: a strip across the bottom of the screen must not swallow a click
+        meant for the application underneath it.
         """
         self.root.bind("<Escape>", lambda e: self.close())
         self.root.bind("<space>", lambda e: self._command({"type": "toggle_pause"}))
@@ -251,6 +323,11 @@ class SubtitleOverlay:
     def run(self) -> None:
         log.info("overlay running at %s, %dpx %s", self.position,
                  self.font_size, self._font.cget("family"))
+        if topmost_win.IS_WINDOWS:
+            log.info("staying on top: re-raised every %dms, click-through=%s, "
+                     "shell reports %s", self.topmost_interval_ms,
+                     self.click_through,
+                     topmost_win.describe_state(topmost_win.notification_state()))
         self.root.mainloop()
 
     def close(self) -> None:

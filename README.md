@@ -76,10 +76,26 @@ System-wide hotkeys, which work whichever application has focus:
 | `Ctrl+Alt+S` | Show and hide the subtitles |
 | `Ctrl+Alt+T` | Move them between the bottom and the top of the screen |
 | `Ctrl+Alt+P` | Pause and resume recognition |
+| `Ctrl+Alt+Q` | Quit |
 
 White text on a partly transparent black band, never more than two lines. A
 long sentence shrinks to fit before anything is dropped. Room speech translated
 back into English appears in blue, as it does on the full-screen display.
+
+The strip stays in front of applications running full screen, not only
+windowed ones. Windows puts a full-screen application in front of everything
+else when it takes focus, so the overlay pushes itself back to the front four
+times a second (`overlay.topmost_interval_ms`). It never takes focus and clicks
+pass straight through it, so it cannot knock a full-screen application out of
+full screen or swallow a click meant for it — which is also why the hotkeys
+above are the way to control it.
+
+One case it cannot win: an application in **exclusive** full screen draws
+straight to the display without going through Windows' compositor, and then
+nothing from any other program can appear over it. `Diagnose.bat` says so in
+as many words if that is what is happening. The fix is on that application's
+side — run it in "borderless" or "windowed full screen" instead, which looks
+identical and is what most software does by default now.
 
 First run creates a virtualenv and installs dependencies, which takes a few
 minutes, and downloads the speech model. Later runs go straight to starting. Startup checks that LM Studio is
@@ -273,6 +289,7 @@ livetranslate/
   asr_whisper.py   speech recognition on Windows (faster-whisper)
   asr_backend.py   picks the recogniser for the platform
   hotkeys_win.py   system-wide hotkeys on Windows
+  topmost_win.py   keeps the overlay over full-screen applications (Windows)
   static/          the browser display surface
 
 config.toml        all settings

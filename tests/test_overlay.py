@@ -10,6 +10,7 @@ import pytest
 
 tk = pytest.importorskip("tkinter", reason="tkinter not available")
 
+from livetranslate import topmost_win
 from livetranslate.config import Config
 from livetranslate.overlay import COLOUR_FROM_PT, SubtitleOverlay
 
@@ -183,6 +184,75 @@ def test_an_unknown_message_does_not_break_the_overlay(overlay):
 
 def test_draining_an_empty_queue_is_safe(overlay):
     overlay._drain()
+
+
+# ---------------- staying on top ----------------
+
+def test_keeping_on_top_is_safe_to_call(overlay):
+    """Called on a timer for the whole session, and on every show."""
+    overlay._keep_on_top()
+    overlay._keep_on_top(restyle=True)
+    overlay.set_line(MEDIUM)
+    assert "conector" in overlay.label.cget("text")
+
+
+def test_the_tick_keeps_rescheduling_itself(overlay):
+    """If it stops, the strip silently falls behind the next full-screen app."""
+    before = overlay._topmost_ticks
+    overlay._topmost_tick()
+    assert overlay._topmost_ticks == before + 1
+    overlay._topmost_tick()
+    assert overlay._topmost_ticks == before + 2
+
+
+def test_a_hidden_overlay_is_not_raised(overlay):
+    """Re-raising a withdrawn window would undo the hotkey that hid it."""
+    overlay.visible = False
+    overlay._hwnd = None
+    overlay._keep_on_top(restyle=True)
+    assert overlay._hwnd is None
+    overlay.visible = True
+
+
+def test_a_closing_overlay_stops_ticking(overlay):
+    """The tick must not resurrect a window that is being destroyed."""
+    overlay._closing = True
+    try:
+        before = overlay._topmost_ticks
+        overlay._topmost_tick()
+        assert overlay._topmost_ticks == before
+    finally:
+        overlay._closing = False
+
+
+def test_interval_of_zero_means_no_tick(cfg_win):
+    """Documented escape hatch, so it must actually be reachable."""
+    cfg = Config.load("config.windows.toml")
+    cfg._data["overlay"]["topmost_interval_ms"] = 0
+    assert int(cfg.get("overlay.topmost_interval_ms")) == 0
+
+
+@pytest.mark.skipif(not topmost_win.IS_WINDOWS, reason="Windows Z-order only")
+def test_windows_window_is_actually_restyled_and_raised(overlay):
+    """The whole fix, checked against the real window: styles applied to the
+    live handle, and the raise accepted by the window manager."""
+    overlay._keep_on_top(restyle=True)
+    assert overlay._hwnd, "no top-level handle found for the overlay"
+
+    import ctypes
+
+    ex = ctypes.WinDLL("user32").GetWindowLongW(overlay._hwnd,
+                                                topmost_win.GWL_EXSTYLE)
+    assert ex & topmost_win.WS_EX_NOACTIVATE, "the overlay could steal focus"
+    assert ex & topmost_win.WS_EX_TRANSPARENT, "clicks would not pass through"
+    assert topmost_win.raise_to_top(overlay._hwnd) is True
+
+
+@pytest.mark.skipif(not topmost_win.IS_WINDOWS, reason="Windows Z-order only")
+def test_windows_reports_what_the_shell_thinks_is_in_front():
+    state = topmost_win.notification_state()
+    assert state is not None, "SHQueryUserNotificationState should answer here"
+    assert topmost_win.describe_state(state)
 
 
 def test_position_setting_is_honoured(cfg_win, overlay):

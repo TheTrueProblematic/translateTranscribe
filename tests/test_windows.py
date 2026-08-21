@@ -15,6 +15,7 @@ from livetranslate.hotkeys_win import (MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
                                        MOD_SHIFT, MOD_WIN, GlobalHotkeys,
                                        HotkeyError, parse_binding)
 from livetranslate.normalizer import Normalizer
+from livetranslate import topmost_win
 
 
 # ---------------- backend selection ----------------
@@ -109,12 +110,13 @@ def test_windows_overlay_settings_are_present(win):
     assert 0.0 < win.get("overlay.opacity") <= 1.0
     assert win.get("overlay.position") in ("top", "bottom")
     for key in ("overlay.hotkey_toggle", "overlay.hotkey_position",
-                "overlay.hotkey_pause"):
+                "overlay.hotkey_pause", "overlay.hotkey_quit"):
         parse_binding(win.get(key))          # must not raise
 
 
 def test_windows_hotkeys_are_distinct(win):
-    bindings = [win.get(f"overlay.hotkey_{n}") for n in ("toggle", "position", "pause")]
+    bindings = [win.get(f"overlay.hotkey_{n}")
+                for n in ("toggle", "position", "pause", "quit")]
     assert len(set(bindings)) == len(bindings), f"duplicate hotkeys: {bindings}"
 
 
@@ -197,3 +199,78 @@ def test_unparseable_hotkey_is_recorded_not_raised():
     hk = GlobalHotkeys(loop=None)
     assert hk.add("nonsense", lambda: None) is False
     assert hk.failed and hk.failed[0][0] == "nonsense"
+
+
+# ---------------- staying above a full-screen application ----------------
+
+def test_the_topmost_settings_are_present(win):
+    """The overlay is useless behind the application being presented."""
+    assert win.get("overlay.topmost_interval_ms") > 0
+    assert win.get("overlay.click_through") is True
+
+
+def test_re_raising_is_frequent_enough_to_be_unnoticed(win):
+    """A gap of a second after the front application changes is invisible in
+    use; several seconds would be a blank screen at the wrong moment."""
+    assert 100 <= win.get("overlay.topmost_interval_ms") <= 2000
+
+
+def test_topmost_calls_are_safe_without_a_window():
+    """Every entry point takes a handle that may not exist yet."""
+    assert topmost_win.window_handle(None) is None
+    assert topmost_win.harden(None) is False
+    assert topmost_win.harden(0) is False
+    assert topmost_win.raise_to_top(None) is False
+    assert topmost_win.raise_to_top(0) is False
+
+
+def test_topmost_is_a_no_op_off_windows():
+    if sys.platform == "win32":
+        pytest.skip("this machine is Windows")
+    assert topmost_win.notification_state() is None
+    assert topmost_win.exclusive_fullscreen() is False
+
+
+@pytest.mark.parametrize("state", [
+    topmost_win.QUNS_NOT_PRESENT, topmost_win.QUNS_BUSY,
+    topmost_win.QUNS_RUNNING_D3D_FULL_SCREEN, topmost_win.QUNS_PRESENTATION_MODE,
+    topmost_win.QUNS_ACCEPTS_NOTIFICATIONS, topmost_win.QUNS_QUIET_TIME,
+    topmost_win.QUNS_APP,
+])
+def test_every_shell_state_has_a_readable_name(state):
+    """This string goes in the log when the overlay cannot be seen."""
+    described = topmost_win.describe_state(state)
+    assert described and not described.startswith("state ")
+
+
+def test_an_unknown_shell_state_still_describes_itself():
+    assert topmost_win.describe_state(None) == "unknown"
+    assert "99" in topmost_win.describe_state(99)
+
+
+def test_exclusive_fullscreen_is_the_state_that_cannot_be_beaten():
+    """Only exclusive Direct3D bypasses the compositor. A full-screen window
+    (QUNS_BUSY) is ordinary and must not be reported as hopeless."""
+    assert topmost_win.QUNS_RUNNING_D3D_FULL_SCREEN != topmost_win.QUNS_BUSY
+    assert "Direct3D" in topmost_win.describe_state(
+        topmost_win.QUNS_RUNNING_D3D_FULL_SCREEN)
+
+
+def test_topmost_style_bits_are_the_documented_ones():
+    """Wrong constants here fail silently: the window simply stays behind."""
+    assert topmost_win.WS_EX_TRANSPARENT == 0x20
+    assert topmost_win.WS_EX_TOOLWINDOW == 0x80
+    assert topmost_win.WS_EX_NOACTIVATE == 0x08000000
+    assert topmost_win.GWL_EXSTYLE == -20
+    assert topmost_win.HWND_TOPMOST == -1
+    # Re-raising must not move, resize or focus the window.
+    assert topmost_win._RAISE_FLAGS == 0x0001 | 0x0002 | 0x0010
+
+
+def test_the_topmost_bit_is_not_set_through_setwindowlong():
+    """SetWindowLong does not change the Z-order band; SetWindowPos does. A
+    window with the bit and not the band looks correct and stays behind."""
+    import inspect
+
+    source = inspect.getsource(topmost_win.harden)
+    assert "TOPMOST" not in source

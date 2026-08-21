@@ -150,12 +150,17 @@ class OverlayApp:
         toggle = self.cfg.get("overlay.hotkey_toggle", "ctrl+alt+s")
         move = self.cfg.get("overlay.hotkey_position", "ctrl+alt+t")
         pause = self.cfg.get("overlay.hotkey_pause", "ctrl+alt+p")
+        quit_key = self.cfg.get("overlay.hotkey_quit", "ctrl+alt+q")
 
         # These run on the asyncio loop, so hop back to the UI thread for
         # anything that touches a widget.
         self.hotkeys.add(toggle, lambda: self._on_ui(lambda: self.overlay.toggle_visible()))
         self.hotkeys.add(move, lambda: self._on_ui(lambda: self.overlay.toggle_position()))
         self.hotkeys.add(pause, self._toggle_pause)
+        # The overlay cannot be clicked or focused, so its own Escape binding is
+        # unreachable on Windows; this is the way out that does not mean going
+        # to find the console window.
+        self.hotkeys.add(quit_key, lambda: self._on_ui(lambda: self.overlay.close()))
         self.hotkeys.start()
 
         if self.hotkeys.registered:

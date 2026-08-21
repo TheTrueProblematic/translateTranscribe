@@ -5,6 +5,7 @@ REM
 REM   Ctrl+Alt+S   show / hide the subtitles
 REM   Ctrl+Alt+T   move them between the bottom and the top of the screen
 REM   Ctrl+Alt+P   pause / resume recognition
+REM   Ctrl+Alt+Q   quit
 REM
 REM LM Studio on another machine:  LiveTranslate.bat --lmstudio 192.168.1.50
 setlocal

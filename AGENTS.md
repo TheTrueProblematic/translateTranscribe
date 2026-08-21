@@ -108,6 +108,7 @@ and the heartbeat.
 | `overlay.py` | The always-on-top subtitle window (tkinter). |
 | `overlay_app.py` | Runs the pipeline behind the overlay: asyncio thread plus tkinter main thread. |
 | `hotkeys_win.py` | System-wide hotkeys on Windows, via ctypes and RegisterHotKey. |
+| `topmost_win.py` | Windows only: keeps the overlay above a full-screen application. |
 | `chunker.py` | Groups words into translatable chunks on three triggers. |
 | `normalizer.py` | Deterministic text repair before translation. |
 | `langid.py` | English and Portuguese scoring; routes each line. |
@@ -221,7 +222,64 @@ macOS and is discouraged everywhere. `tests/test_overlay.py` uses a single
 module-scoped root and resets its state between tests. Do not convert that
 fixture to function scope.
 
-### 4.9 Config layering
+### 4.9 Always-on-top is not one flag, on Windows
+
+Observed on the target machine: the overlay floated correctly over windowed
+applications and sat *behind* an application running full screen (ARS). The
+cause is not the overlay's styles. Windows raises a foreground full-screen
+window above the topmost band, and full-screen applications commonly assert
+topmost themselves, in which case whichever window was raised last wins. Tk's
+`wm attributes -topmost` asserts the position exactly once, at creation, so it
+always loses that race.
+
+`topmost_win.py` re-raises the window with `SetWindowPos(HWND_TOPMOST)` on a
+timer (`overlay.topmost_interval_ms`, default 250). **Re-raising is the fix.
+Asserting once, however it is asserted, is not.** Three details in that file
+are easy to get wrong and fail silently:
+
+- **Never set `WS_EX_TOPMOST` through `SetWindowLong`.** It sets the bit
+  without moving the window between Z-order bands, so the window reports
+  itself as topmost and still renders behind. `SetWindowPos` is the only way
+  in. A test asserts the constant does not appear in `harden()`.
+- **Tk can destroy and recreate a toplevel's wrapper HWND** when an attribute
+  changes, which silently drops styles applied to the old handle. The handle
+  is re-read every tick and restyled whenever it differs.
+- **`winfo_id()` is not the window the window manager orders.** It is the
+  inner Tk window; the wrapper is its root ancestor, so it is walked up with
+  `GetAncestor(GA_ROOT)`. `wm frame` reports the wrapper directly but only as
+  a string whose base differs between builds.
+
+The one case none of this wins: an application in **exclusive** full screen (a
+Direct3D swap chain flipped straight to the display) is not composited by the
+desktop window manager, so no other process can draw over it at all. That is a
+platform fact, not a bug to be fixed here. `exclusive_fullscreen()` detects it
+through `SHQueryUserNotificationState` and both the log and `--diagnose` name
+it, so it is not rediscovered as a mystery. The remedy is outside this
+process: run the presented application in borderless or windowed full screen.
+
+Measured on the target machine after the fix, on the live window: topmost band
+entered, `WS_EX_NOACTIVATE`, `WS_EX_TRANSPARENT`, `WS_EX_TOOLWINDOW` and
+`WS_EX_LAYERED` all set, tick firing on interval, and the strip visible in a
+screenshot over a full-screen topmost window that had taken the foreground.
+
+The interval was chosen from measurement, not taste. A full-screen topmost
+window was made to claim the front, and the real Z-order sampled 20 times a
+second for 6 seconds; the figure is the share of that time the strip was
+genuinely in front:
+
+| interval | app claims the front once | app claims it 4x a second |
+|---|---|---|
+| 1000 ms | 100% | 14% |
+| 250 ms | 100% | 63% |
+| 100 ms | - | 78% |
+
+Claiming once is what an application does when it goes full screen or is
+switched to, and any interval fixes that. **No interval wins outright against
+an application that re-claims the front continuously.** That is a race, and
+tuning the number is not going to end it — do not read a stray report of the
+strip flickering behind something as a bug to be fixed by a smaller interval.
+
+### 4.10 Config layering
 
 `config.ars.toml` declares `extends = "config.toml"` and overrides only the
 session vocabulary. Tables merge key by key. Do not fork the config into two
@@ -274,6 +332,49 @@ output drifts in style that is the first thing to suspect.
 `Translator.preflight()` accepts a single unambiguous near-match on the model
 id, because LM Studio names the MLX and GGUF builds differently and a naming
 mismatch is a bad reason to fail to start.
+
+### The overlay cannot be focused or clicked (Windows only)
+
+`topmost_win.harden()` sets `WS_EX_NOACTIVATE` and, unless
+`overlay.click_through` is turned off, `WS_EX_TRANSPARENT`. Both exist because
+of what the overlay sits over.
+
+NOACTIVATE means the window can never take keyboard focus. That is a
+requirement, not a nicety: an application in full screen that loses focus
+typically drops out of full screen or minimises itself, so an overlay that
+could be activated would sabotage the very thing it is captioning — worse than
+no overlay at all. It is also why re-raising can be done every second without
+disturbing anything: `SWP_NOACTIVATE` changes Z-order and nothing else.
+
+TRANSPARENT means mouse clicks pass through to whatever is underneath. A strip
+across the bottom of the screen that swallowed clicks meant for the application
+below it would be a hazard during a live session.
+
+The cost is that the overlay's own key bindings (`space`, `t`, `h`) are
+unreachable on Windows, since they need a click to focus the window. They were
+already documented as a fallback; the global hotkeys are the real mechanism and
+they work regardless of focus, which is the whole point of `hotkeys_win.py`.
+`overlay.click_through = false` restores clickability for anyone who wants it.
+
+### Owning the presented window was considered and rejected (Windows only)
+
+A timer that re-raises the overlay cannot beat an application that re-claims
+the front continuously (landmine 4.9 has the numbers). Win32 offers a way that
+would: an *owned* window is always above its owner, permanently and without
+polling, so setting the overlay's owner to the full-screen application's window
+would win the Z-order outright.
+
+Rejected. It couples this process's window to another process's window, and
+every failure mode lands during a live session: an owned window is hidden when
+its owner minimises, so the subtitles would vanish rather than fall behind;
+cross-process ownership attaches input queues, so an application that hangs can
+take the overlay's UI thread with it; and the owner has to be re-assigned every
+time the presenter switches application. Polling is coupled to nothing,
+self-heals within one interval, and fails visibly rather than silently.
+
+The alternative that actually removes the race is not available to us either:
+raising the window into a higher Z-order band with `SetWindowBand` requires a
+UIAccess manifest and installation under Program Files.
 
 ### ASR model: multilingual v3 (reversed once)
 
@@ -379,6 +480,15 @@ differ, and CUDA changes it entirely):
 | Ready latency, full pipeline | ~3 s median on CPU |
 | Real-time factor, full pipeline | keeps up: 33 s wall for 31 s of audio |
 
+Measured on the target Windows 11 machine (2880x1800 at 200%, Python 3.14.5,
+whisper base on CPU):
+
+| | value |
+|---|---|
+| Whisper 'base' load | 1.0 s, int8 on CPU |
+| Overlay in front of a full-screen window that claimed the front once | 100% of samples |
+| Overlay in front of one re-claiming it 4x a second | 63% at a 250 ms interval, 14% at 1000 ms |
+
 The sub-1-second target from the original brief is **not met** for phrase-final
 text and cannot be, given a spec-mandated 400 ms silence detection plus the ASR
 stability lag. Mid-utterance text does land inside a second. This is documented
@@ -467,11 +577,14 @@ language routing, reading-time queueing, transcripts, diagnostics.
 
 ### Known limitations
 
-- **Nothing on Windows has been run on Windows.** It was developed and tested
-  on macOS: faster-whisper, tkinter and the config layering all run here and
-  are covered by tests, but `RegisterHotKey`, the `.bat` launchers and the
-  overlay's always-on-top behaviour over a real presentation have never
-  executed on the target platform. Those are the three things to check first.
+- **Windows is now running on Windows, but not yet through a live session.**
+  The pipeline, the overlay and the `.bat` launchers have all been exercised on
+  a Windows 11 machine. Always-on-top was wrong there and is fixed: see
+  landmine 4.9. Verified on the real window manager — the strip holds over
+  windowed applications and over a full-screen window. Still unverified on the
+  target platform: `RegisterHotKey` under a real presentation, and behaviour
+  over a genuinely *exclusive* full-screen Direct3D application, which cannot
+  work and is instead detected and reported.
 - **The Portuguese direction has never been tested with a real speaker.** All
   Portuguese validation used macOS `say` voices. Routing was clean on 400 real
   English lines, so the speaker's own words are safe, but how the system

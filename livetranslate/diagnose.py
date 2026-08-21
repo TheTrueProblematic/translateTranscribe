@@ -38,6 +38,27 @@ async def run_diagnostics(config_path: str | None = None) -> int:
     _line(OK, "platform", f"{describe_platform()}, Python {sys.version.split()[0]}")
     _line(OK, "ASR backend", backend)
 
+    # ---- the overlay's layering, on Windows ----
+    from .topmost_win import (IS_WINDOWS, QUNS_RUNNING_D3D_FULL_SCREEN,
+                              describe_state, notification_state)
+
+    if IS_WINDOWS:
+        interval = int(cfg.get("overlay.topmost_interval_ms", 250))
+        if interval > 0:
+            _line(OK, "overlay stays on top", f"re-raised every {interval}ms")
+        else:
+            _line(WARN, "overlay stays on top",
+                  "overlay.topmost_interval_ms is 0, so the subtitles will "
+                  "disappear behind anything running full screen.")
+        state = notification_state()
+        if state == QUNS_RUNNING_D3D_FULL_SCREEN:
+            _line(WARN, "what is in front", describe_state(state) +
+                  ". Such an application bypasses the desktop compositor, so "
+                  "no overlay can appear over it -- run it in borderless or "
+                  "windowed full screen instead.")
+        else:
+            _line(OK, "what is in front", describe_state(state))
+
     # ---- imports ----
     required = [("sounddevice", "pip install sounddevice"),
                 ("aiohttp", "pip install aiohttp")]

@@ -92,11 +92,56 @@ margin_fraction = 0.06      # gap from the top or bottom edge
 pad_x = 28
 pad_y = 18
 
+# Staying on top of a full-screen application.
+#
+# Setting the always-on-top flag once is only enough over windowed
+# applications. Windows raises a foreground full-screen window above the
+# always-on-top band, and full-screen applications often claim always-on-top
+# themselves, in which case whichever window was raised last wins. The strip is
+# therefore pushed back to the front on this interval, which is what actually
+# keeps it visible over something like ARS.
+#
+# Measured against a full-screen window that claims the front, sampling the
+# real Z-order 20 times a second for 6 seconds. Percentage of that time the
+# subtitles were actually in front:
+#
+#                       claims the front once   claims it 4x a second
+#   1000ms                        100%                   14%
+#    250ms                        100%                   63%
+#    100ms                          -                    78%
+#
+# Claiming once is what an application does when it goes full screen or is
+# switched to, so that column is the real world and any interval fixes it.
+# 250ms is the default because it also holds up against an application that
+# keeps grabbing the front, and because it is what caps the gap after every
+# switch: a quarter second of subtitles missing rather than a whole second.
+# Four calls a second costs nothing measurable.
+#
+# No interval wins outright against an application that re-claims the front
+# continuously -- that is a race, not a bug to be tuned away. 0 disables this
+# entirely and restores the old behaviour of vanishing behind anything running
+# full screen.
+topmost_interval_ms = 250
+
+# Mouse clicks pass straight through the strip to the application underneath,
+# and the window can never take keyboard focus. Both matter over a full-screen
+# application: one that loses focus drops out of full screen or minimises, so a
+# window that could be activated would be worse than no overlay at all.
+#
+# Set this to false only to click the overlay and use its own keys (space, t,
+# h); the cost is that the strip then swallows clicks meant for the application
+# below it. The hotkeys below are the intended way in either case.
+click_through = true
+
 # System-wide hotkeys: they work whichever application has focus, because the
 # overlay deliberately never takes focus itself.
 hotkey_toggle   = "ctrl+alt+s"   # show / hide the subtitles
 hotkey_position = "ctrl+alt+t"   # move between bottom and top
 hotkey_pause    = "ctrl+alt+p"   # stop and resume recognition
+# Quit. The overlay cannot be clicked while click_through is on, so its own
+# Escape key is unreachable; without this the only way out is the console
+# window the launcher opened, which is behind the application being presented.
+hotkey_quit     = "ctrl+alt+q"
 
 # ============================================================================
 # Reading time, overridden for the overlay
